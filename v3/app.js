@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let db, currentGeo = null, currentFile = null;
+let db, currentGeo = null, currentFile = null, currentHeading = null;
 
 const req = indexedDB.open("offline_survey_pwa_db", 2);
 req.onupgradeneeded = (e) => {
@@ -9,9 +9,11 @@ req.onupgradeneeded = (e) => {
 };
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-// GPS
-$("btnGeo").onclick = () => {
+// GPS & 方位取得
+$("btnGeo").onclick = async () => {
     $("geoCheck").textContent = "⌛";
+    
+    // GPS取得
     navigator.geolocation.getCurrentPosition(
         (p) => {
             currentGeo = p;
@@ -22,7 +24,27 @@ $("btnGeo").onclick = () => {
         (err) => { $("geoCheck").textContent = "❌"; },
         { enableHighAccuracy: true, timeout: 7000 }
     );
+
+    // 方位取得（iOS対応）
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+            const state = await DeviceOrientationEvent.requestPermission();
+            if (state === 'granted') window.addEventListener("deviceorientation", updateHeading, true);
+        } catch (e) { console.error(e); }
+    } else {
+        window.addEventListener("deviceorientationabsolute", updateHeading, true) || 
+        window.addEventListener("deviceorientation", updateHeading, true);
+    }
 };
+
+function updateHeading(e) {
+    // iOSはwebkitCompassHeading、その他はalphaから計算
+    let h = e.webkitCompassHeading || (360 - e.alpha);
+    if (h) {
+        currentHeading = Math.round(h);
+        $("heading").textContent = currentHeading;
+    }
+}
 
 // 写真プレビュー
 $("photoInput").onchange = (e) => {
@@ -33,6 +55,7 @@ $("photoInput").onchange = (e) => {
         reader.onload = (re) => {
             $("imgPreview").src = re.target.result;
             $("previewContainer").style.display = "block";
+            $("previewLabel").textContent = "新規撮影プレビュー";
         };
         reader.readAsDataURL(currentFile);
     }
@@ -87,6 +110,7 @@ $("btnSave").onclick = async () => {
         id: id, createdAt: new Date().toISOString(),
         lat: currentGeo ? currentGeo.coords.latitude : 0,
         lng: currentGeo ? currentGeo.coords.longitude : 0,
+        heading: currentHeading || 0,
         location: $("selLocation").value || "-",
         subLocation: $("selSubLocation").value || "-",
         item: $("selItem").value || "-",
@@ -103,7 +127,7 @@ $("btnSave").onclick = async () => {
     };
 };
 
-// 履歴表示 ＆ 再表示
+// 履歴表示
 async function renderTable() {
     if (!db) return;
     const tx = db.transaction("surveys", "readonly");
@@ -119,7 +143,7 @@ async function renderTable() {
                     const reader = new FileReader();
                     reader.onload = (re) => {
                         $("imgPreview").src = re.target.result; $("previewContainer").style.display = "block";
-                        $("previewLabel").innerHTML = `【履歴】${r.location}<br>${r.memo || ""}`;
+                        $("previewLabel").innerHTML = `【履歴】${r.location}<br>方位: ${r.heading || 0}° / ${r.memo || ""}`;
                         window.scrollTo({ top: 0, behavior: 'smooth' });
                     };
                     reader.readAsDataURL(r.photoBlob);
@@ -130,7 +154,23 @@ async function renderTable() {
     };
 }
 
-// 【完全修正】一括ダウンロード
+// 全データ削除（誤操作防止付き）
+$("btnDeleteAll").onclick = async () => {
+    if (!confirm("【注意】すべての保存履歴を削除します。よろしいですか？")) return;
+    const check = prompt("確認のため、ひらがなで「さくじょ」と入力してください");
+    if (check !== "さくじょ") {
+        alert("入力内容が一致しないため、削除を中止しました");
+        return;
+    }
+
+    const tx = db.transaction("surveys", "readwrite");
+    tx.objectStore("surveys").clear().onsuccess = () => {
+        alert("すべての履歴を削除しました");
+        renderTable();
+    };
+};
+
+// 一括ダウンロード
 $("btnDownloadAll").onclick = async () => {
     const tx = db.transaction("surveys", "readonly");
     tx.objectStore("surveys").getAll().onsuccess = async (e) => {
@@ -138,21 +178,16 @@ $("btnDownloadAll").onclick = async () => {
         if (!data || data.length === 0) { alert("データがありません"); return; }
 
         const zip = new JSZip();
-        let csv = "ID,日時,緯度,経度,地点,小区分,項目,備考,写真名\n";
+        let csv = "ID,日時,緯度,経度,方位,地点,小区分,項目,備考,写真名\n";
 
-        // 画像を1つずつバイナリに変換してZIPに追加
         for (const r of data) {
-            csv += `${r.id},${r.createdAt},${r.lat},${r.lng},${r.location},${r.subLocation},${r.item},"${(r.memo || "").replace(/"/g, '""')}",${r.photoName}\n`;
-            
+            csv += `${r.id},${r.createdAt},${r.lat},${r.lng},${r.heading || 0},${r.location},${r.subLocation},${r.item},"${(r.memo || "").replace(/"/g, '""')}",${r.photoName}\n`;
             if (r.photoBlob && r.photoBlob.size > 0) {
-                // BlobをArrayBufferに変換してZIPに追加（より確実な方法）
                 const arrayBuffer = await r.photoBlob.arrayBuffer();
                 zip.file(r.photoName, arrayBuffer);
             }
         }
-
         zip.file("data_list.csv", "\ufeff" + csv);
-        
         const content = await zip.generateAsync({ type: "blob" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(content);
