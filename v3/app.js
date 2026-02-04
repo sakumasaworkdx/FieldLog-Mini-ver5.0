@@ -8,6 +8,14 @@ if (typeof JSZip === "undefined") {
     document.head.appendChild(s);
 }
 
+// 16方位を計算する関数
+const getDirectionName = (deg) => {
+    if (deg === null || deg === undefined || isNaN(deg)) return "-";
+    const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
+    const index = Math.round(deg / 22.5) % 16;
+    return directions[index];
+};
+
 // IndexedDB
 const req = indexedDB.open("offline_field_log_v6", 1);
 req.onupgradeneeded = (e) => {
@@ -18,21 +26,28 @@ req.onupgradeneeded = (e) => {
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
 // GPS/Orientation
-navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
+navigator.geolocation.watchPosition(p => { 
+    currentGeo = p; 
+}, null, {enableHighAccuracy:true});
+
 window.addEventListener("deviceorientationabsolute", (e) => {
     let h = e.webkitCompassHeading || (360 - e.alpha);
-    if (h !== undefined) currentHeading = Math.round(h);
+    if (h !== undefined) {
+        currentHeading = Math.round(h);
+    }
 }, true);
 
+// 位置記録ボタン
 $("btnGeo").onclick = () => {
     if(!currentGeo) return alert("GPS受信中...");
     $("lat").textContent = currentGeo.coords.latitude.toFixed(6);
     $("lng").textContent = currentGeo.coords.longitude.toFixed(6);
-    $("heading").textContent = (currentHeading || 0) + "°";
+    const dirName = getDirectionName(currentHeading);
+    $("heading").textContent = `${currentHeading || 0}° (${dirName})`;
     $("geoCheck").textContent = "✅";
 };
 
-// CSV読み込み (A,B,C列を独立読込)
+// CSVリスト読み込み
 $("listCsvInput").onchange = async (e) => {
     if(!e.target.files[0]) return;
     const text = await e.target.files[0].text();
@@ -44,7 +59,7 @@ $("listCsvInput").onchange = async (e) => {
         const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
         store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
     });
-    tx.oncomplete = () => { alert("読込完了"); loadLists(); };
+    tx.oncomplete = () => { alert("リスト読込完了"); loadLists(); };
 };
 
 async function loadLists() {
@@ -60,7 +75,7 @@ async function loadLists() {
     };
 }
 
-// 写真・保存
+// 写真撮影
 $("photoInput").onchange = (e) => {
     currentFile = e.target.files[0];
     if(currentFile) {
@@ -70,12 +85,16 @@ $("photoInput").onchange = (e) => {
     }
 };
 
+// データ保存
 $("btnSave").onclick = () => {
     if (!$("selLocation").value) return alert("地点を選んでください");
     const id = Date.now();
+    const dirName = getDirectionName(currentHeading);
     const rec = {
         id: id, createdAt: new Date().toLocaleString('ja-JP'),
-        lat: $("lat").textContent, lng: $("lng").textContent, heading: $("heading").textContent,
+        lat: $("lat").textContent, lng: $("lng").textContent, 
+        headingValue: currentHeading !== null ? currentHeading : 0, // セル分け用(数値)
+        headingName: dirName, // セル分け用(日本語)
         location: $("selLocation").value, subLocation: $("selSubLocation").value,
         item: $("selItem").value, memo: $("memo").value,
         photoName: currentFile ? `img_${id}.jpg` : null, photoBlob: currentFile
@@ -87,34 +106,57 @@ $("btnSave").onclick = () => {
     };
 };
 
-// ZIPダウンロード
+// 一括ZIP保存（CSVセル分け対応）
 $("btnDownloadAll").onclick = async () => {
-    if (typeof JSZip === "undefined") return alert("JSZip準備中。一度ネットに繋いでください。");
+    if (typeof JSZip === "undefined") return alert("JSZip準備中。");
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
         const data = e.target.result;
         if (!data.length) return alert("データなし");
         const zip = new JSZip();
-        let csv = "\ufeff日時,緯度,経度,方位,地点,小区分,項目,備考,写真\n";
+        // ヘッダーで方位を分離
+        let csv = "\ufeff日時,緯度,経度,方位角(°),方位名,地点,小区分,項目,備考,写真ファイル名\n";
         for (const r of data) {
-            csv += `${r.createdAt},${r.lat},${r.lng},${r.heading},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
+            // 各値をカンマで区切ってセル分け
+            csv += `${r.createdAt},${r.lat},${r.lng},${r.headingValue},${r.headingName},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
             if (r.photoBlob) zip.file(r.photoName, r.photoBlob);
         }
         zip.file("data.csv", csv);
         const blob = await zip.generateAsync({type:"blob"});
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `field_data_${Date.now()}.zip`;
+        a.download = `survey_data_${Date.now()}.zip`;
         a.click();
     };
 };
 
+// 一覧表示とプレビュー
 function renderTable() {
     if(!db) return;
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
-        $("list").innerHTML = e.target.result.sort((a,b)=>b.id-a.id).map(r => `<tr><td>${r.location}</td><td>${r.photoBlob?"◯":"-"}</td></tr>`).join("");
+        const data = e.target.result.sort((a,b)=>b.id-a.id);
+        let html = `<tr style="background:#222; color:#aaa; font-size:11px;">
+            <th style="padding:5px;">地点</th><th style="padding:5px;">GPS</th><th style="padding:5px;">写真</th></tr>`;
+        
+        data.forEach(r => {
+            const gpsStatus = (r.lat !== "-") ? "✅" : "-";
+            let photoBtn = "-";
+            if (r.photoBlob) {
+                const url = URL.createObjectURL(r.photoBlob);
+                // ◯をクリックでプレビュー
+                photoBtn = `<button onclick="window.open('${url}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>`;
+            }
+            html += `<tr style="border-bottom:1px solid #333;">
+                <td style="padding:8px; font-size:13px;">${r.location}</td>
+                <td style="text-align:center;">${gpsStatus}</td>
+                <td style="text-align:center;">${photoBtn}</td>
+            </tr>`;
+        });
+        $("list").innerHTML = html;
     };
 }
 
 $("btnDeleteAll").onclick = () => {
-    if(confirm("全削除？")) db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
+    if(confirm("全ての記録を削除します。CSV・ZIPの書き出しは済みましたか？")) {
+        db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
+    }
 };
