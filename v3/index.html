@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="stylesheet" href="./styles.css?v=110" />
-  <title>FieldLog Mini v3.6</title>
+  <title>FieldLog Mini v3.7</title>
 </head>
 <body>
   <main class="container">
@@ -22,7 +22,7 @@
         </label>
         <button id="btnGeo" class="btn-main geo-btn" type="button">
           <span class="icon">📍</span>
-          <span class="label">GPS取得 <span id="geoCheck"></span></span>
+          <span class="label">GPS・方位取得 <span id="geoCheck"></span></span>
         </button>
       </div>
 
@@ -31,7 +31,10 @@
         <div id="previewLabel" style="font-size:12px; color:#aaa; margin-top:5px;"></div>
       </div>
 
-      <div class="geo-info">緯度: <span id="lat">-</span> / 経度: <span id="lng">-</span></div>
+      <div class="geo-info">
+        緯度: <span id="lat">-</span> / 経度: <span id="lng">-</span><br>
+        方位: <span id="heading">-</span>°
+      </div>
 
       <select id="selLocation" class="input-field"><option value="">地点を選択</option></select>
       <select id="selSubLocation" class="input-field"><option value="">小区分を選択</option></select>
@@ -44,7 +47,10 @@
     <section class="card history-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h2 style="font-size:14px; margin:0;">📊 保存履歴</h2>
-        <button id="btnDownloadAll" class="btn-blue" style="padding:5px 10px; font-size:12px; border-radius:5px;">📦 一括DL(ZIP)</button>
+        <div style="display:flex; gap:8px;">
+            <button id="btnDownloadAll" class="btn-blue" style="padding:5px 10px; font-size:12px; border-radius:5px;">📦 一括DL</button>
+            <button id="btnDeleteAll" style="padding:5px 10px; font-size:12px; border-radius:5px; background:#660000; color:white; border:none; cursor:pointer;">⚠️ 全削除</button>
+        </div>
       </div>
       <div class="table-container">
         <table>
