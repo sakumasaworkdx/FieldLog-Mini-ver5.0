@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let db, currentGeo = null, currentFile = null, currentHeading = null;
-let currentSortCol = 'id', isSortAsc = false; // ソート用状態
+let currentSortCol = 'id', isSortAsc = false;
 
 // JSZipの読み込み
 if (typeof JSZip === "undefined") {
@@ -9,7 +9,6 @@ if (typeof JSZip === "undefined") {
     document.head.appendChild(s);
 }
 
-// 16方位を計算
 const getDirectionName = (deg) => {
     if (deg === null || deg === undefined || isNaN(deg)) return "-";
     const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
@@ -17,7 +16,6 @@ const getDirectionName = (deg) => {
     return directions[index];
 };
 
-// IndexedDB
 const req = indexedDB.open("offline_field_log_v6", 1);
 req.onupgradeneeded = (e) => {
     const d = e.target.result;
@@ -26,7 +24,6 @@ req.onupgradeneeded = (e) => {
 };
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-// GPS/Orientation
 navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
 window.addEventListener("deviceorientationabsolute", (e) => {
     let h = e.webkitCompassHeading || (360 - e.alpha);
@@ -123,45 +120,51 @@ $("btnDownloadAll").onclick = async () => {
     };
 };
 
-// --- 一覧表・フィルター・ソート機能 ---
+// --- 絞り込み・ソート機能 ---
 function toggleSort(col) {
     if (currentSortCol === col) isSortAsc = !isSortAsc;
     else { currentSortCol = col; isSortAsc = true; }
     renderTable();
 }
 
-// フィルター入力時に再描画
-function onFilterChange() { renderTable(); }
-
 function renderTable() {
     if(!db) return;
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
-        let data = e.target.result;
+        let allData = e.target.result;
         
-        // 検索フィルター (上部にフィルター用入力欄を追加)
-        const filterText = ($("filterInput") ? $("filterInput").value : "").toLowerCase();
-        if (filterText) {
-            data = data.filter(r => 
-                r.location.toLowerCase().includes(filterText) || 
-                r.subLocation.toLowerCase().includes(filterText) || 
-                r.item.toLowerCase().includes(filterText)
-            );
-        }
+        // 既存のフィルター値を取得
+        const fLoc = $("filterLoc") ? $("filterLoc").value : "";
+        const fItem = $("filterItem") ? $("filterItem").value : "";
 
-        // ソート処理
-        data.sort((a, b) => {
+        // 絞り込み実行
+        let filteredData = allData.filter(r => {
+            return (fLoc === "" || r.location === fLoc) && (fItem === "" || r.item === fItem);
+        });
+
+        // ソート
+        filteredData.sort((a, b) => {
             let valA = a[currentSortCol], valB = b[currentSortCol];
             if (valA < valB) return isSortAsc ? -1 : 1;
             if (valA > valB) return isSortAsc ? 1 : -1;
             return 0;
         });
 
-        // テーブルヘッダー生成（クリックでソート）
+        // フィルター用のプルダウン選択肢（全データから重複なく生成）
+        const locOptions = [...new Set(allData.map(r => r.location))].filter(v=>v);
+        const itemOptions = [...new Set(allData.map(r => r.item))].filter(v=>v);
+
         let html = `
-            <div style="margin-bottom:10px;">
-                <input id="filterInput" type="text" class="input-field" placeholder="🔎 地点・項目で絞り込み..." oninput="onFilterChange()" value="${filterText}">
+            <div style="display:flex; gap:5px; margin-bottom:10px;">
+                <select id="filterLoc" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
+                    <option value="">全ての地点</option>
+                    ${locOptions.map(v => `<option value="${v}" ${v===fLoc?'selected':''}>${v}</option>`).join("")}
+                </select>
+                <select id="filterItem" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
+                    <option value="">全ての項目</option>
+                    ${itemOptions.map(v => `<option value="${v}" ${v===fItem?'selected':''}>${v}</option>`).join("")}
+                </select>
             </div>
-            <table style="font-size:11px; width:100%; border-collapse:collapse;">
+            <table style="font-size:10px; width:100%; border-collapse:collapse;">
             <tr style="background:#222; color:#aaa; cursor:pointer;">
                 <th onclick="toggleSort('location')" style="padding:5px; border:1px solid #333;">地点⇅</th>
                 <th onclick="toggleSort('subLocation')" style="padding:5px; border:1px solid #333;">小区分⇅</th>
@@ -170,25 +173,22 @@ function renderTable() {
                 <th style="padding:5px; border:1px solid #333;">写真</th>
             </tr>`;
         
-        data.forEach(r => {
+        filteredData.forEach(r => {
             const gpsStatus = (r.lat !== "-") ? "✅" : "-";
             const photoBtn = r.photoBlob ? `<button onclick="window.open('${URL.createObjectURL(r.photoBlob)}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>` : "-";
             html += `<tr>
-                <td style="padding:8px; border:1px solid #333;">${r.location}</td>
-                <td style="padding:8px; border:1px solid #333;">${r.subLocation}</td>
-                <td style="padding:8px; border:1px solid #333;">${r.item}</td>
+                <td style="padding:5px; border:1px solid #333;">${r.location}</td>
+                <td style="padding:5px; border:1px solid #333;">${r.subLocation}</td>
+                <td style="padding:5px; border:1px solid #333;">${r.item}</td>
                 <td style="text-align:center; border:1px solid #333;">${gpsStatus}</td>
                 <td style="text-align:center; border:1px solid #333;">${photoBtn}</td>
             </tr>`;
         });
         html += `</table>`;
         $("list").innerHTML = html;
-        // inputにフォーカスが外れないよう配慮が必要な場合は別途修正しますが、一旦これで動きます。
     };
 }
 
-// フィルター用グローバル関数化
-window.onFilterChange = onFilterChange;
 window.toggleSort = toggleSort;
 
 $("btnDeleteAll").onclick = () => {
