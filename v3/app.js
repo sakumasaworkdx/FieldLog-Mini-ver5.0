@@ -1,199 +1,116 @@
+// --- JSZip Library Embedded (Partially for ZIP generation) ---
+// 現場でJSZipがない事態を防ぐため、動的に読み込むか、ここにjszip.min.jsの内容を全貼り付けしてください。
+// ここでは、オンライン時に一度読み込めばキャッシュされる自動インポート形式を採用します。
+if (typeof JSZip === "undefined") {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    document.head.appendChild(s);
+}
+
 const $ = (id) => document.getElementById(id);
 let db, currentGeo = null, currentFile = null, currentHeading = null;
 
-const req = indexedDB.open("offline_survey_pwa_db", 2);
+// DB初期化
+const req = indexedDB.open("offline_survey_v6_db", 1);
 req.onupgradeneeded = (e) => {
     const d = e.target.result;
-    if (!d.objectStoreNames.contains("surveys")) d.createObjectStore("surveys", { keyPath: "id" });
-    if (!d.objectStoreNames.contains("lists")) d.createObjectStore("lists", { keyPath: "id" });
+    d.createObjectStore("surveys", { keyPath: "id" });
+    d.createObjectStore("lists", { keyPath: "id" });
 };
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-// GPS & 方位取得
-$("btnGeo").onclick = async () => {
-    $("geoCheck").textContent = "⌛";
-    
-    // GPS取得
-    navigator.geolocation.getCurrentPosition(
-        (p) => {
-            currentGeo = p;
-            $("lat").textContent = p.coords.latitude.toFixed(6);
-            $("lng").textContent = p.coords.longitude.toFixed(6);
-            $("geoCheck").textContent = "✅";
-        },
-        (err) => { $("geoCheck").textContent = "❌"; },
-        { enableHighAccuracy: true, timeout: 7000 }
-    );
-
-    // 方位取得（iOS対応）
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-            const state = await DeviceOrientationEvent.requestPermission();
-            if (state === 'granted') window.addEventListener("deviceorientation", updateHeading, true);
-        } catch (e) { console.error(e); }
-    } else {
-        window.addEventListener("deviceorientationabsolute", updateHeading, true) || 
-        window.addEventListener("deviceorientation", updateHeading, true);
-    }
-};
-
-function updateHeading(e) {
-    // iOSはwebkitCompassHeading、その他はalphaから計算
+// 位置・方位
+navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
+window.addEventListener("deviceorientationabsolute", (e) => {
     let h = e.webkitCompassHeading || (360 - e.alpha);
-    if (h) {
-        currentHeading = Math.round(h);
-        $("heading").textContent = currentHeading;
-    }
-}
+    if (h !== undefined) currentHeading = Math.round(h);
+}, true);
 
-// 写真プレビュー
-$("photoInput").onchange = (e) => {
-    currentFile = e.target.files[0];
-    if(currentFile) {
-        $("photoCheck").textContent = "✅";
-        const reader = new FileReader();
-        reader.onload = (re) => {
-            $("imgPreview").src = re.target.result;
-            $("previewContainer").style.display = "block";
-            $("previewLabel").textContent = "新規撮影プレビュー";
-        };
-        reader.readAsDataURL(currentFile);
-    }
+$("btnGeo").onclick = () => {
+    if(!currentGeo) return alert("GPS受信中...");
+    $("lat").textContent = currentGeo.coords.latitude.toFixed(6);
+    $("lng").textContent = currentGeo.coords.longitude.toFixed(6);
+    $("heading").textContent = (currentHeading || 0) + "°";
+    $("geoCheck").textContent = "✅";
 };
 
-// CSV読み込み
+// CSV単純読込 (A,B,C列を独立して各プルダウンへ)
 $("listCsvInput").onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    try {
-        const text = await file.text();
-        const rows = text.split(/\r?\n/).map(r => r.trim()).filter(r => r !== "");
-        const tx = db.transaction("lists", "readwrite");
-        const store = tx.objectStore("lists");
-        await store.clear();
-        rows.forEach((row, idx) => {
-            const cols = row.split(",").map(c => c.replace(/^["']|["']$/g, '').trim());
-            if (cols.length >= 1) {
-                store.put({ id: idx, loc: cols[0] || "", sub: cols[1] || "", item: cols[2] || "" });
-            }
-        });
-        tx.oncomplete = () => { alert("リスト更新完了"); loadLists(); };
-    } catch (err) { alert("読み込み失敗"); }
+    const text = await e.target.files[0].text();
+    const rows = text.split(/\r?\n/).filter(r => r.trim() !== "");
+    const tx = db.transaction("lists", "readwrite");
+    const store = tx.objectStore("lists");
+    await store.clear();
+    rows.forEach((row, idx) => {
+        const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
+        store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
+    });
+    tx.oncomplete = () => { alert("リスト読込完了"); loadLists(); };
 };
 
 async function loadLists() {
     if (!db) return;
-    const tx = db.transaction("lists", "readonly");
-    tx.objectStore("lists").getAll().onsuccess = (e) => {
-        const data = e.target.result;
-        const updateSelect = (id, values, label) => {
-            const el = $(id);
-            el.innerHTML = `<option value="">${label}</option>`;
-            const headers = ["地点", "小区分", "項目", "loc", "sub", "item"];
-            [...new Set(values)].filter(v => v && !headers.includes(v.toLowerCase())).forEach(v => {
-                const opt = document.createElement("option");
-                opt.value = opt.textContent = v; el.appendChild(opt);
-            });
+    db.transaction("lists", "readonly").objectStore("lists").getAll().onsuccess = (e) => {
+        const d = e.target.result;
+        const upd = (id, vals, lbl) => {
+            $(id).innerHTML = `<option value="">${lbl}</option>` + [...new Set(vals)].filter(v=>v).map(v=>`<option value="${v}">${v}</option>`).join("");
         };
-        updateSelect("selLocation", data.map(d => d.loc), "地点を選択");
-        updateSelect("selSubLocation", data.map(d => d.sub), "小区分を選択");
-        updateSelect("selItem", data.map(d => d.item), "項目を選択");
+        upd("selLocation", d.map(x=>x.a), "地点を選択");
+        upd("selSubLocation", d.map(x=>x.b), "小区分を選択");
+        upd("selItem", d.map(x=>x.c), "項目を選択");
     };
 }
 
 // 保存
-$("btnSave").onclick = async () => {
-    const hasData = currentFile || $("memo").value.trim() !== "" || $("selLocation").value !== "";
-    if (!hasData) { alert("保存するデータがありません"); return; }
-    const id = Date.now();
-    const rec = {
-        id: id, createdAt: new Date().toISOString(),
-        lat: currentGeo ? currentGeo.coords.latitude : 0,
-        lng: currentGeo ? currentGeo.coords.longitude : 0,
-        heading: currentHeading || 0,
-        location: $("selLocation").value || "-",
-        subLocation: $("selSubLocation").value || "-",
-        item: $("selItem").value || "-",
-        memo: $("memo").value,
-        photoName: currentFile ? `img_${id}.jpg` : "no_image.jpg",
-        photoBlob: currentFile || new Blob([])
-    };
-    const tx = db.transaction("surveys", "readwrite");
-    tx.objectStore("surveys").put(rec).onsuccess = () => {
-        alert("保存完了");
-        currentFile = null; $("previewContainer").style.display = "none";
-        $("photoCheck").textContent = ""; $("memo").value = "";
-        renderTable(); 
-    };
+$("photoInput").onchange = (e) => {
+    currentFile = e.target.files[0];
+    if(currentFile) {
+        $("photoCheck").textContent = "✅";
+        $("imgPreview").src = URL.createObjectURL(currentFile);
+        $("previewContainer").style.display = "block";
+    }
 };
 
-// 履歴表示
-async function renderTable() {
-    if (!db) return;
-    const tx = db.transaction("surveys", "readonly");
-    tx.objectStore("surveys").getAll().onsuccess = (e) => {
-        const listEl = $("list");
-        listEl.innerHTML = "";
-        e.target.result.sort((a,b) => b.id - a.id).forEach(r => {
-            const tr = document.createElement("tr");
-            tr.style.fontSize = "11px";
-            tr.innerHTML = `<td style="text-align:left;">${r.location}</td><td style="text-align:left;">${r.subLocation}</td><td style="text-align:left;">${r.item}</td><td class="photo-cell" style="cursor:pointer; color:#00bb55; font-weight:bold; font-size:16px;">${r.photoBlob.size > 0 ? "◯" : "-"}</td><td>${r.lat !== 0 ? "◯" : "-"}</td>`;
-            if (r.photoBlob.size > 0) {
-                tr.querySelector(".photo-cell").onclick = () => {
-                    const reader = new FileReader();
-                    reader.onload = (re) => {
-                        $("imgPreview").src = re.target.result; $("previewContainer").style.display = "block";
-                        $("previewLabel").innerHTML = `【履歴】${r.location}<br>方位: ${r.heading || 0}° / ${r.memo || ""}`;
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                    };
-                    reader.readAsDataURL(r.photoBlob);
-                };
-            }
-            listEl.appendChild(tr);
-        });
+$("btnSave").onclick = () => {
+    if (!$("selLocation").value) return alert("地点未選択");
+    const id = Date.now();
+    const rec = {
+        id: id, createdAt: new Date().toLocaleString('ja-JP'),
+        lat: $("lat").textContent, lng: $("lng").textContent, heading: $("heading").textContent,
+        location: $("selLocation").value, subLocation: $("selSubLocation").value,
+        item: $("selItem").value, memo: $("memo").value,
+        photoName: currentFile ? `img_${id}.jpg` : null, photoBlob: currentFile
     };
-}
-
-// 全データ削除（誤操作防止付き）
-$("btnDeleteAll").onclick = async () => {
-    if (!confirm("【注意】すべての保存履歴を削除します。よろしいですか？")) return;
-    const check = prompt("確認のため、ひらがなで「さくじょ」と入力してください");
-    if (check !== "さくじょ") {
-        alert("入力内容が一致しないため、削除を中止しました");
-        return;
-    }
-
-    const tx = db.transaction("surveys", "readwrite");
-    tx.objectStore("surveys").clear().onsuccess = () => {
-        alert("すべての履歴を削除しました");
+    db.transaction("surveys", "readwrite").objectStore("surveys").put(rec).onsuccess = () => {
+        alert("保存完了");
+        currentFile = null; $("photoCheck").textContent = ""; $("previewContainer").style.display = "none";
         renderTable();
     };
 };
 
-// 一括ダウンロード
+// 一括ZIP保存
 $("btnDownloadAll").onclick = async () => {
-    const tx = db.transaction("surveys", "readonly");
-    tx.objectStore("surveys").getAll().onsuccess = async (e) => {
+    if (typeof JSZip === "undefined") return alert("JSZip読込中...一度ネット環境で開いてください。");
+    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
         const data = e.target.result;
-        if (!data || data.length === 0) { alert("データがありません"); return; }
-
+        if (!data.length) return alert("データなし");
         const zip = new JSZip();
-        let csv = "ID,日時,緯度,経度,方位,地点,小区分,項目,備考,写真名\n";
-
+        let csv = "\ufeff日時,緯度,経度,方位,地点,小区分,項目,備考,写真\n";
         for (const r of data) {
-            csv += `${r.id},${r.createdAt},${r.lat},${r.lng},${r.heading || 0},${r.location},${r.subLocation},${r.item},"${(r.memo || "").replace(/"/g, '""')}",${r.photoName}\n`;
-            if (r.photoBlob && r.photoBlob.size > 0) {
-                const arrayBuffer = await r.photoBlob.arrayBuffer();
-                zip.file(r.photoName, arrayBuffer);
-            }
+            csv += `${r.createdAt},${r.lat},${r.lng},${r.heading},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
+            if (r.photoBlob) zip.file(r.photoName, r.photoBlob);
         }
-        zip.file("data_list.csv", "\ufeff" + csv);
-        const content = await zip.generateAsync({ type: "blob" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(content);
-        link.download = `survey_data_${Date.now()}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        zip.file("data.csv", csv);
+        const blob = await zip.generateAsync({type:"blob"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `survey_${Date.now()}.zip`;
+        a.click();
     };
-};
+}
+
+function renderTable() {
+    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
+        $("list").innerHTML = e.target.result.sort((a,b)=>b.id-a.id).map(r => `<tr><td>${r.location}</td><td>${r.photoName?"◯":"-"}</td></tr>`).join("");
+    };
+}
