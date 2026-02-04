@@ -1,17 +1,15 @@
-// --- JSZip Library Embedded (Partially for ZIP generation) ---
-// 現場でJSZipがない事態を防ぐため、動的に読み込むか、ここにjszip.min.jsの内容を全貼り付けしてください。
-// ここでは、オンライン時に一度読み込めばキャッシュされる自動インポート形式を採用します。
+const $ = (id) => document.getElementById(id);
+let db, currentGeo = null, currentFile = null, currentHeading = null;
+
+// JSZipの読み込み
 if (typeof JSZip === "undefined") {
     const s = document.createElement("script");
     s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
     document.head.appendChild(s);
 }
 
-const $ = (id) => document.getElementById(id);
-let db, currentGeo = null, currentFile = null, currentHeading = null;
-
-// DB初期化
-const req = indexedDB.open("offline_survey_v6_db", 1);
+// IndexedDB
+const req = indexedDB.open("offline_field_log_v6", 1);
 req.onupgradeneeded = (e) => {
     const d = e.target.result;
     d.createObjectStore("surveys", { keyPath: "id" });
@@ -19,7 +17,7 @@ req.onupgradeneeded = (e) => {
 };
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-// 位置・方位
+// GPS/Orientation
 navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
 window.addEventListener("deviceorientationabsolute", (e) => {
     let h = e.webkitCompassHeading || (360 - e.alpha);
@@ -34,8 +32,9 @@ $("btnGeo").onclick = () => {
     $("geoCheck").textContent = "✅";
 };
 
-// CSV単純読込 (A,B,C列を独立して各プルダウンへ)
+// CSV読み込み (A,B,C列を独立読込)
 $("listCsvInput").onchange = async (e) => {
+    if(!e.target.files[0]) return;
     const text = await e.target.files[0].text();
     const rows = text.split(/\r?\n/).filter(r => r.trim() !== "");
     const tx = db.transaction("lists", "readwrite");
@@ -45,7 +44,7 @@ $("listCsvInput").onchange = async (e) => {
         const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
         store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
     });
-    tx.oncomplete = () => { alert("リスト読込完了"); loadLists(); };
+    tx.oncomplete = () => { alert("読込完了"); loadLists(); };
 };
 
 async function loadLists() {
@@ -61,7 +60,7 @@ async function loadLists() {
     };
 }
 
-// 保存
+// 写真・保存
 $("photoInput").onchange = (e) => {
     currentFile = e.target.files[0];
     if(currentFile) {
@@ -72,7 +71,7 @@ $("photoInput").onchange = (e) => {
 };
 
 $("btnSave").onclick = () => {
-    if (!$("selLocation").value) return alert("地点未選択");
+    if (!$("selLocation").value) return alert("地点を選んでください");
     const id = Date.now();
     const rec = {
         id: id, createdAt: new Date().toLocaleString('ja-JP'),
@@ -88,9 +87,9 @@ $("btnSave").onclick = () => {
     };
 };
 
-// 一括ZIP保存
+// ZIPダウンロード
 $("btnDownloadAll").onclick = async () => {
-    if (typeof JSZip === "undefined") return alert("JSZip読込中...一度ネット環境で開いてください。");
+    if (typeof JSZip === "undefined") return alert("JSZip準備中。一度ネットに繋いでください。");
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
         const data = e.target.result;
         if (!data.length) return alert("データなし");
@@ -104,13 +103,18 @@ $("btnDownloadAll").onclick = async () => {
         const blob = await zip.generateAsync({type:"blob"});
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `survey_${Date.now()}.zip`;
+        a.download = `field_data_${Date.now()}.zip`;
         a.click();
+    };
+};
+
+function renderTable() {
+    if(!db) return;
+    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
+        $("list").innerHTML = e.target.result.sort((a,b)=>b.id-a.id).map(r => `<tr><td>${r.location}</td><td>${r.photoBlob?"◯":"-"}</td></tr>`).join("");
     };
 }
 
-function renderTable() {
-    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
-        $("list").innerHTML = e.target.result.sort((a,b)=>b.id-a.id).map(r => `<tr><td>${r.location}</td><td>${r.photoName?"◯":"-"}</td></tr>`).join("");
-    };
-}
+$("btnDeleteAll").onclick = () => {
+    if(confirm("全削除？")) db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
+};
