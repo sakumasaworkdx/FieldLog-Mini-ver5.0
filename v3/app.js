@@ -85,38 +85,52 @@ $("photoInput").onchange = (e) => {
     }
 };
 
-// データ保存
+// データ保存（地点未選択でも許可）
 $("btnSave").onclick = () => {
-    if (!$("selLocation").value) return alert("地点を選んでください");
+    // 完全に何も入力・撮影されていない場合のみブロック
+    if (!currentFile && !$("lat").textContent !== "-" && !$("memo").value && !$("selLocation").value) {
+        return alert("保存するデータがありません");
+    }
+
     const id = Date.now();
     const dirName = getDirectionName(currentHeading);
     const rec = {
         id: id, createdAt: new Date().toLocaleString('ja-JP'),
         lat: $("lat").textContent, lng: $("lng").textContent, 
-        headingValue: currentHeading !== null ? currentHeading : 0, // セル分け用(数値)
-        headingName: dirName, // セル分け用(日本語)
-        location: $("selLocation").value, subLocation: $("selSubLocation").value,
-        item: $("selItem").value, memo: $("memo").value,
-        photoName: currentFile ? `img_${id}.jpg` : null, photoBlob: currentFile
+        headingValue: currentHeading !== null ? currentHeading : 0,
+        headingName: dirName,
+        location: $("selLocation").value || "(未選択)", // 空なら未選択とする
+        subLocation: $("selSubLocation").value || "",
+        item: $("selItem").value || "",
+        memo: $("memo").value,
+        photoName: currentFile ? `img_${id}.jpg` : null, 
+        photoBlob: currentFile
     };
+
     db.transaction("surveys", "readwrite").objectStore("surveys").put(rec).onsuccess = () => {
         alert("保存完了");
-        currentFile = null; $("photoCheck").textContent = ""; $("previewContainer").style.display = "none";
+        // リセット処理
+        currentFile = null; 
+        $("photoCheck").textContent = ""; 
+        $("geoCheck").textContent = "";
+        $("lat").textContent = "-"; 
+        $("lng").textContent = "-"; 
+        $("heading").textContent = "-";
+        $("memo").value = "";
+        $("previewContainer").style.display = "none";
         renderTable();
     };
 };
 
-// 一括ZIP保存（CSVセル分け対応）
+// 一括ZIP保存
 $("btnDownloadAll").onclick = async () => {
     if (typeof JSZip === "undefined") return alert("JSZip準備中。");
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
         const data = e.target.result;
         if (!data.length) return alert("データなし");
         const zip = new JSZip();
-        // ヘッダーで方位を分離
         let csv = "\ufeff日時,緯度,経度,方位角(°),方位名,地点,小区分,項目,備考,写真ファイル名\n";
         for (const r of data) {
-            // 各値をカンマで区切ってセル分け
             csv += `${r.createdAt},${r.lat},${r.lng},${r.headingValue},${r.headingName},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
             if (r.photoBlob) zip.file(r.photoName, r.photoBlob);
         }
@@ -129,7 +143,7 @@ $("btnDownloadAll").onclick = async () => {
     };
 };
 
-// 一覧表示とプレビュー
+// 一覧表示
 function renderTable() {
     if(!db) return;
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
@@ -142,7 +156,6 @@ function renderTable() {
             let photoBtn = "-";
             if (r.photoBlob) {
                 const url = URL.createObjectURL(r.photoBlob);
-                // ◯をクリックでプレビュー
                 photoBtn = `<button onclick="window.open('${url}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>`;
             }
             html += `<tr style="border-bottom:1px solid #333;">
@@ -156,7 +169,7 @@ function renderTable() {
 }
 
 $("btnDeleteAll").onclick = () => {
-    if(confirm("全ての記録を削除します。CSV・ZIPの書き出しは済みましたか？")) {
+    if(confirm("全ての記録を削除します。よろしいですか？")) {
         db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
     }
 };
