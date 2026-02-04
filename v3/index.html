@@ -3,72 +3,59 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="stylesheet" href="./styles.css?v=110" />
-  <title>FieldLog Mini v3.7</title>
+  <title>FieldLog v6.0 Ultra-Offline</title>
+  <style>
+    body { background:#000; color:#fff; font-family:sans-serif; margin:0; padding:10px; }
+    .card { background:#111; border:1px solid #333; padding:15px; border-radius:12px; margin-bottom:15px; }
+    .btn-main { width:100%; border-radius:12px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-weight:bold; }
+    .photo-btn { background:#00bb55; height:100px; font-size:20px; }
+    .geo-btn { background:#007bff; height:85px; font-size:18px; }
+    .btn-save { background:#dc3545; height:90px; font-size:24px; }
+    .geo-info-box { background:#000; color:#0f0; padding:15px; border-radius:8px; font-family:monospace; line-height:1.6; border:1px solid #333; margin-bottom:15px; }
+    .input-field { width:100%; background:#222; color:#fff; border:1px solid #444; padding:14px; border-radius:8px; margin-bottom:10px; font-size:16px; box-sizing:border-box; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    td { padding:10px; border-bottom:1px solid #333; }
+  </style>
 </head>
 <body>
-  <main class="container">
-    <details class="card settings-card">
-      <summary>⚙️ CSV読み込み (地点,小区分,項目)</summary>
-      <input id="listCsvInput" type="file" accept=".csv" style="margin-top:10px;" />
+  <main style="max-width:500px; margin:0 auto;">
+    <details class="card">
+      <summary style="cursor:pointer; color:#aaa;">⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
+      <input id="listCsvInput" type="file" accept=".csv" style="width:100%;">
     </details>
 
     <section class="card">
-      <div class="action-grid">
-        <label class="btn-main photo-btn">
-          <input id="photoInput" type="file" accept="image/*" capture="environment">
-          <span class="icon">📷</span>
-          <span class="label">写真 <span id="photoCheck"></span></span>
-        </label>
-        <button id="btnGeo" class="btn-main geo-btn" type="button">
-          <span class="icon">📍</span>
-          <span class="label">GPS・方位取得 <span id="geoCheck"></span></span>
-        </button>
-      </div>
-
-      <div id="previewContainer" style="text-align:center; display:none; margin-bottom:15px;">
-        <img id="imgPreview" style="max-width:100%; height:auto; border-radius:8px; border:1px solid #444;">
-        <div id="previewLabel" style="font-size:12px; color:#aaa; margin-top:5px;"></div>
-      </div>
-
-      <div class="geo-info">
-        緯度: <span id="lat">-</span> / 経度: <span id="lng">-</span><br>
-        方位: <span id="heading">-</span>°
-      </div>
-
+      <label class="btn-main photo-btn">
+        <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none;">
+        <span style="font-size:35px; margin-right:15px;">📷</span> 写真を撮る <span id="photoCheck"></span>
+      </label>
+      <button id="btnGeo" class="btn-main geo-btn" type="button">
+        <span style="font-size:30px; margin-right:15px;">📍</span> 位置・方位を記録 <span id="geoCheck"></span>
+      </button>
+      <div id="previewContainer" style="text-align:center; display:none; margin-bottom:15px;"><img id="imgPreview" style="max-width:100%; border-radius:8px;"></div>
+      <div class="geo-info-box">緯度: <span id="lat">-</span><br>経度: <span id="lng">-</span><br>方位: <span id="heading">-</span></div>
       <select id="selLocation" class="input-field"><option value="">地点を選択</option></select>
       <select id="selSubLocation" class="input-field"><option value="">小区分を選択</option></select>
       <select id="selItem" class="input-field"><option value="">項目を選択</option></select>
-      <textarea id="memo" class="input-field memo-area" placeholder="備考"></textarea>
-      
-      <button id="btnSave" class="btn-save" type="button">💾 データを保存</button>
+      <textarea id="memo" class="input-field" style="height:80px;" placeholder="備考"></textarea>
+      <button id="btnSave" class="btn-save btn-main">💾 データを保存</button>
     </section>
 
-    <section class="card history-card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h2 style="font-size:14px; margin:0;">📊 保存履歴</h2>
-        <div style="display:flex; gap:8px;">
-            <button id="btnDownloadAll" class="btn-blue" style="padding:5px 10px; font-size:12px; border-radius:5px;">📦 一括DL</button>
-            <button id="btnDeleteAll" style="padding:5px 10px; font-size:12px; border-radius:5px; background:#660000; color:white; border:none; cursor:pointer;">⚠️ 全削除</button>
-        </div>
+    <section class="card">
+      <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+        <button id="btnDownloadAll" style="background:#007bff; color:white; border:none; padding:12px; border-radius:8px; font-weight:bold;">📦 一括ZIP保存</button>
+        <button id="btnDeleteAll" style="background:#600; color:white; border:none; padding:12px; border-radius:8px;">⚠️ 全削除</button>
       </div>
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:30%;">地点</th>
-              <th style="width:25%;">小区分</th>
-              <th style="width:25%;">項目</th>
-              <th style="width:10%;">写</th>
-              <th style="width:10%;">G</th>
-            </tr>
-          </thead>
-          <tbody id="list"></tbody>
-        </table>
-      </div>
+      <table id="list"></table>
     </section>
   </main>
-  <script src="../jszip.min.js"></script>
-  <script src="./app.js?v=110"></script>
+
+  <script>
+    // Service Workerの登録
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(() => console.log("Offline ready."));
+    }
+  </script>
+  <script src="./app.js"></script>
 </body>
 </html>
