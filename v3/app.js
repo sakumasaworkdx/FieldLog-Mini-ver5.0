@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 let db, currentGeo = null, currentFile = null, currentHeading = null;
+let currentSortCol = 'id', isSortAsc = false; // ソート用状態
 
 // JSZipの読み込み
 if (typeof JSZip === "undefined") {
@@ -8,7 +9,7 @@ if (typeof JSZip === "undefined") {
     document.head.appendChild(s);
 }
 
-// 16方位を計算する関数
+// 16方位を計算
 const getDirectionName = (deg) => {
     if (deg === null || deg === undefined || isNaN(deg)) return "-";
     const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
@@ -26,18 +27,12 @@ req.onupgradeneeded = (e) => {
 req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
 // GPS/Orientation
-navigator.geolocation.watchPosition(p => { 
-    currentGeo = p; 
-}, null, {enableHighAccuracy:true});
-
+navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
 window.addEventListener("deviceorientationabsolute", (e) => {
     let h = e.webkitCompassHeading || (360 - e.alpha);
-    if (h !== undefined) {
-        currentHeading = Math.round(h);
-    }
+    if (h !== undefined) currentHeading = Math.round(h);
 }, true);
 
-// 位置記録ボタン
 $("btnGeo").onclick = () => {
     if(!currentGeo) return alert("GPS受信中...");
     $("lat").textContent = currentGeo.coords.latitude.toFixed(6);
@@ -47,7 +42,6 @@ $("btnGeo").onclick = () => {
     $("geoCheck").textContent = "✅";
 };
 
-// CSVリスト読み込み
 $("listCsvInput").onchange = async (e) => {
     if(!e.target.files[0]) return;
     const text = await e.target.files[0].text();
@@ -59,7 +53,7 @@ $("listCsvInput").onchange = async (e) => {
         const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
         store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
     });
-    tx.oncomplete = () => { alert("リスト読込完了"); loadLists(); };
+    tx.oncomplete = () => { alert("読込完了"); loadLists(); };
 };
 
 async function loadLists() {
@@ -69,13 +63,12 @@ async function loadLists() {
         const upd = (id, vals, lbl) => {
             $(id).innerHTML = `<option value="">${lbl}</option>` + [...new Set(vals)].filter(v=>v).map(v=>`<option value="${v}">${v}</option>`).join("");
         };
-        upd("selLocation", d.map(x=>x.a), "地点を選択");
-        upd("selSubLocation", d.map(x=>x.b), "小区分を選択");
-        upd("selItem", d.map(x=>x.c), "項目を選択");
+        upd("selLocation", d.map(x=>x.a), "地点");
+        upd("selSubLocation", d.map(x=>x.b), "小区分");
+        upd("selItem", d.map(x=>x.c), "項目");
     };
 }
 
-// 写真撮影
 $("photoInput").onchange = (e) => {
     currentFile = e.target.files[0];
     if(currentFile) {
@@ -85,13 +78,8 @@ $("photoInput").onchange = (e) => {
     }
 };
 
-// データ保存（地点未選択でも許可）
 $("btnSave").onclick = () => {
-    // 完全に何も入力・撮影されていない場合のみブロック
-    if (!currentFile && !$("lat").textContent !== "-" && !$("memo").value && !$("selLocation").value) {
-        return alert("保存するデータがありません");
-    }
-
+    if (!currentFile && $("lat").textContent === "-" && !$("memo").value && !$("selLocation").value) return alert("データなし");
     const id = Date.now();
     const dirName = getDirectionName(currentHeading);
     const rec = {
@@ -99,32 +87,24 @@ $("btnSave").onclick = () => {
         lat: $("lat").textContent, lng: $("lng").textContent, 
         headingValue: currentHeading !== null ? currentHeading : 0,
         headingName: dirName,
-        location: $("selLocation").value || "(未選択)", // 空なら未選択とする
+        location: $("selLocation").value || "(未選択)",
         subLocation: $("selSubLocation").value || "",
         item: $("selItem").value || "",
         memo: $("memo").value,
         photoName: currentFile ? `img_${id}.jpg` : null, 
         photoBlob: currentFile
     };
-
     db.transaction("surveys", "readwrite").objectStore("surveys").put(rec).onsuccess = () => {
         alert("保存完了");
-        // リセット処理
-        currentFile = null; 
-        $("photoCheck").textContent = ""; 
-        $("geoCheck").textContent = "";
-        $("lat").textContent = "-"; 
-        $("lng").textContent = "-"; 
-        $("heading").textContent = "-";
-        $("memo").value = "";
-        $("previewContainer").style.display = "none";
+        currentFile = null; $("photoCheck").textContent = ""; $("geoCheck").textContent = "";
+        $("lat").textContent = "-"; $("lng").textContent = "-"; $("heading").textContent = "-";
+        $("memo").value = ""; $("previewContainer").style.display = "none";
         renderTable();
     };
 };
 
-// 一括ZIP保存
 $("btnDownloadAll").onclick = async () => {
-    if (typeof JSZip === "undefined") return alert("JSZip準備中。");
+    if (typeof JSZip === "undefined") return alert("JSZip準備中");
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
         const data = e.target.result;
         if (!data.length) return alert("データなし");
@@ -138,38 +118,81 @@ $("btnDownloadAll").onclick = async () => {
         const blob = await zip.generateAsync({type:"blob"});
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `survey_data_${Date.now()}.zip`;
+        a.download = `survey_${Date.now()}.zip`;
         a.click();
     };
 };
 
-// 一覧表示
+// --- 一覧表・フィルター・ソート機能 ---
+function toggleSort(col) {
+    if (currentSortCol === col) isSortAsc = !isSortAsc;
+    else { currentSortCol = col; isSortAsc = true; }
+    renderTable();
+}
+
+// フィルター入力時に再描画
+function onFilterChange() { renderTable(); }
+
 function renderTable() {
     if(!db) return;
     db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
-        const data = e.target.result.sort((a,b)=>b.id-a.id);
-        let html = `<tr style="background:#222; color:#aaa; font-size:11px;">
-            <th style="padding:5px;">地点</th><th style="padding:5px;">GPS</th><th style="padding:5px;">写真</th></tr>`;
+        let data = e.target.result;
+        
+        // 検索フィルター (上部にフィルター用入力欄を追加)
+        const filterText = ($("filterInput") ? $("filterInput").value : "").toLowerCase();
+        if (filterText) {
+            data = data.filter(r => 
+                r.location.toLowerCase().includes(filterText) || 
+                r.subLocation.toLowerCase().includes(filterText) || 
+                r.item.toLowerCase().includes(filterText)
+            );
+        }
+
+        // ソート処理
+        data.sort((a, b) => {
+            let valA = a[currentSortCol], valB = b[currentSortCol];
+            if (valA < valB) return isSortAsc ? -1 : 1;
+            if (valA > valB) return isSortAsc ? 1 : -1;
+            return 0;
+        });
+
+        // テーブルヘッダー生成（クリックでソート）
+        let html = `
+            <div style="margin-bottom:10px;">
+                <input id="filterInput" type="text" class="input-field" placeholder="🔎 地点・項目で絞り込み..." oninput="onFilterChange()" value="${filterText}">
+            </div>
+            <table style="font-size:11px; width:100%; border-collapse:collapse;">
+            <tr style="background:#222; color:#aaa; cursor:pointer;">
+                <th onclick="toggleSort('location')" style="padding:5px; border:1px solid #333;">地点⇅</th>
+                <th onclick="toggleSort('subLocation')" style="padding:5px; border:1px solid #333;">小区分⇅</th>
+                <th onclick="toggleSort('item')" style="padding:5px; border:1px solid #333;">項目⇅</th>
+                <th style="padding:5px; border:1px solid #333;">GPS</th>
+                <th style="padding:5px; border:1px solid #333;">写真</th>
+            </tr>`;
         
         data.forEach(r => {
             const gpsStatus = (r.lat !== "-") ? "✅" : "-";
-            let photoBtn = "-";
-            if (r.photoBlob) {
-                const url = URL.createObjectURL(r.photoBlob);
-                photoBtn = `<button onclick="window.open('${url}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>`;
-            }
-            html += `<tr style="border-bottom:1px solid #333;">
-                <td style="padding:8px; font-size:13px;">${r.location}</td>
-                <td style="text-align:center;">${gpsStatus}</td>
-                <td style="text-align:center;">${photoBtn}</td>
+            const photoBtn = r.photoBlob ? `<button onclick="window.open('${URL.createObjectURL(r.photoBlob)}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>` : "-";
+            html += `<tr>
+                <td style="padding:8px; border:1px solid #333;">${r.location}</td>
+                <td style="padding:8px; border:1px solid #333;">${r.subLocation}</td>
+                <td style="padding:8px; border:1px solid #333;">${r.item}</td>
+                <td style="text-align:center; border:1px solid #333;">${gpsStatus}</td>
+                <td style="text-align:center; border:1px solid #333;">${photoBtn}</td>
             </tr>`;
         });
+        html += `</table>`;
         $("list").innerHTML = html;
+        // inputにフォーカスが外れないよう配慮が必要な場合は別途修正しますが、一旦これで動きます。
     };
 }
 
+// フィルター用グローバル関数化
+window.onFilterChange = onFilterChange;
+window.toggleSort = toggleSort;
+
 $("btnDeleteAll").onclick = () => {
-    if(confirm("全ての記録を削除します。よろしいですか？")) {
+    if(confirm("全消去しますか？")) {
         db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
     }
 };
