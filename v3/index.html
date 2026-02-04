@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>FieldLog v6.0 Ultra-Offline</title>
+  <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22FieldLog%22,%22short_name%22:%22FieldLog%22,%22start_url%22:%22./%22,%22display%22:%22standalone%22}">
+  <title>FieldLog v6.5</title>
   <style>
     body { background:#000; color:#fff; font-family:sans-serif; margin:0; padding:10px; }
     .card { background:#111; border:1px solid #333; padding:15px; border-radius:12px; margin-bottom:15px; }
@@ -15,13 +16,14 @@
     .input-field { width:100%; background:#222; color:#fff; border:1px solid #444; padding:14px; border-radius:8px; margin-bottom:10px; font-size:16px; box-sizing:border-box; }
     table { width:100%; border-collapse:collapse; font-size:12px; }
     td { padding:10px; border-bottom:1px solid #333; }
+    summary { cursor:pointer; color:#aaa; padding:5px; }
   </style>
 </head>
 <body>
   <main style="max-width:500px; margin:0 auto;">
     <details class="card">
-      <summary style="cursor:pointer; color:#aaa;">⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
-      <input id="listCsvInput" type="file" accept=".csv" style="width:100%;">
+      <summary>⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
+      <input id="listCsvInput" type="file" accept=".csv" style="width:100%; margin-top:10px;">
     </details>
 
     <section class="card">
@@ -49,11 +51,18 @@
       <table id="list"></table>
     </section>
   </main>
-
   <script>
-    // Service Workerの登録
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').then(() => console.log("Offline ready."));
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          installingWorker.onstatechange = () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              alert("最新版に更新されました。再起動してください。");
+            }
+          };
+        };
+      });
     }
   </script>
   <script src="./app.js"></script>
