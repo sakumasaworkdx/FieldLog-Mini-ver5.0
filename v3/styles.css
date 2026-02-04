@@ -14,8 +14,9 @@ body { background: #000; color: #fff; font-family: sans-serif; margin: 0; paddin
 .icon { font-size: 24px; }
 
 .geo-info { 
-    background: #000; border: 1px solid #222; padding: 8px; margin-bottom: 12px; 
-    text-align: center; font-family: monospace; font-size: 12px; color: #00ff00; 
+    background: #000; border: 1px solid #222; padding: 10px; margin-bottom: 12px; 
+    text-align: center; font-family: monospace; font-size: 13px; color: #00ff00; 
+    line-height: 1.5;
 }
 
 .input-field {
@@ -29,9 +30,10 @@ body { background: #000; color: #fff; font-family: sans-serif; margin: 0; paddin
     background: #dc3545; color: #fff; font-size: 20px; font-weight: bold;
 }
 
-/* 履歴テーブル（スクロールで全件見れるようにする） */
+.btn-blue { background: #007bff; color: white; border: none; cursor: pointer; }
+
 .table-container { 
-    max-height: 400px; /* 履歴が増えてもここでスクロール可能 */
+    max-height: 400px;
     overflow-y: auto; 
     border: 1px solid #222;
 }
