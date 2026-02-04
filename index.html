@@ -2,102 +2,60 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta name="theme-color" content="#00bb55" />
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css" />
-  <title>Offline Survey</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>FieldLog v6.0 Ultra-Offline</title>
+  <style>
+    body { background:#000; color:#fff; font-family:sans-serif; margin:0; padding:10px; }
+    .card { background:#111; border:1px solid #333; padding:15px; border-radius:12px; margin-bottom:15px; }
+    .btn-main { width:100%; border-radius:12px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-weight:bold; }
+    .photo-btn { background:#00bb55; height:100px; font-size:20px; }
+    .geo-btn { background:#007bff; height:85px; font-size:18px; }
+    .btn-save { background:#dc3545; height:90px; font-size:24px; }
+    .geo-info-box { background:#000; color:#0f0; padding:15px; border-radius:8px; font-family:monospace; line-height:1.6; border:1px solid #333; margin-bottom:15px; }
+    .input-field { width:100%; background:#222; color:#fff; border:1px solid #444; padding:14px; border-radius:8px; margin-bottom:10px; font-size:16px; box-sizing:border-box; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    td { padding:10px; border-bottom:1px solid #333; }
+  </style>
 </head>
 <body>
-  <header class="topbar">
-    <h1>Offline Survey <span class="pill">v2.0</span></h1>
-    <button id="btnInstall" class="primary" style="display:none;">インストール</button>
-  </header>
-
-  <main class="container">
+  <main style="max-width:500px; margin:0 auto;">
+    <details class="card">
+      <summary style="cursor:pointer; color:#aaa;">⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
+      <input id="listCsvInput" type="file" accept=".csv" style="width:100%;">
+    </details>
 
     <section class="card">
-      <div><b>リスト設定（CSV読み込み）</b></div>
-      <div class="hint">PCで作ったCSVを読み込んで、地点/調査項目のプルダウンに反映します（端末内に保存されます）。</div>
-      <div class="row" style="margin-top:10px">
-        <input id="listCsvInput" type="file" accept=".csv,text/csv" />
-        <button id="btnClearLists" class="danger">リスト削除</button>
-      </div>
-      <div id="listStatus" class="hint"></div>
-      <div class="hint">CSV例: 1行目ヘッダ「地点,項目」</div>
+      <label class="btn-main photo-btn">
+        <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none;">
+        <span style="font-size:35px; margin-right:15px;">📷</span> 写真を撮る <span id="photoCheck"></span>
+      </label>
+      <button id="btnGeo" class="btn-main geo-btn" type="button">
+        <span style="font-size:30px; margin-right:15px;">📍</span> 位置・方位を記録 <span id="geoCheck"></span>
+      </button>
+      <div id="previewContainer" style="text-align:center; display:none; margin-bottom:15px;"><img id="imgPreview" style="max-width:100%; border-radius:8px;"></div>
+      <div class="geo-info-box">緯度: <span id="lat">-</span><br>経度: <span id="lng">-</span><br>方位: <span id="heading">-</span></div>
+      <select id="selLocation" class="input-field"><option value="">地点を選択</option></select>
+      <select id="selSubLocation" class="input-field"><option value="">小区分を選択</option></select>
+      <select id="selItem" class="input-field"><option value="">項目を選択</option></select>
+      <textarea id="memo" class="input-field" style="height:80px;" placeholder="備考"></textarea>
+      <button id="btnSave" class="btn-save btn-main">💾 データを保存</button>
     </section>
 
     <section class="card">
-      <div class="row">
-        <input id="photoInput" type="file" accept="image/*" capture="environment" />
-        <button id="btnGeo" class="primary">GPS取得</button>
-        <button id="btnSave">保存</button>
+      <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+        <button id="btnDownloadAll" style="background:#007bff; color:white; border:none; padding:12px; border-radius:8px; font-weight:bold;">📦 一括ZIP保存</button>
+        <button id="btnDeleteAll" style="background:#600; color:white; border:none; padding:12px; border-radius:8px;">⚠️ 全削除</button>
       </div>
-
-      <div class="row small" style="margin-top:8px">
-        <span class="pill">緯度: <span id="lat">-</span></span>
-        <span class="pill">経度: <span id="lng">-</span></span>
-        <span class="pill">精度(m): <span id="acc">-</span></span>
-      </div>
-
-      <div style="margin-top:10px">
-        <div class="row">
-          <div style="flex:1; min-width:240px">
-            <div class="small">地点</div>
-            <select id="selLocation" class="select"></select>
-          </div>
-          <div style="flex:1; min-width:240px">
-            <div class="small">地点2</div>
-            <select id="selLocation2" class="select"></select>
-          </div>
-          <div style="flex:1; min-width:240px">
-            <div class="small">調査項目</div>
-            <select id="selItem" class="select"></select>
-          </div>
-        </div>
-
-        <div style="margin-top:10px">
-          <div class="small">備考（自由欄）</div>
-          <textarea id="memo" placeholder="備考（テキスト）"></textarea>
-        </div>
-
-        <div style="margin-top:10px">
-          <div class="small">備考2（追加の自由欄）</div>
-          <textarea id="memo2" placeholder="備考2（任意）"></textarea>
-        </div>
-
-        <div class="hint">※ 音声入力は削除しました（端末依存が強く不安定なため）。</div>
-      </div>
-
-      <div class="row" style="margin-top:10px; align-items:center;">
-        <img id="preview" class="thumb" alt="preview" />
-        <div class="kv">
-          <div><b>プレビュー</b></div>
-          <div class="mono">保存名: <span id="autoName">-</span></div>
-          <div class="mono">時刻: <span id="ts">-</span></div>
-        </div>
-      </div>
+      <table id="list"></table>
     </section>
-
-    <section class="card">
-      <div class="row">
-        <button id="btnExportZip" class="primary">写真+CSV をZIPで書き出し</button>
-        <button id="btnClear" class="danger">全削除</button>
-      </div>
-      <div id="exportStatus" class="hint"></div>
-      <div class="hint">ZIP内: records.csv(UTF-8 BOM) + photos/ に写真。QGIS想定。</div>
-    </section>
-
-    <section class="card">
-      <div class="row small">
-        <span class="pill">保存件数: <span id="count">0</span></span>
-      </div>
-      <div id="list" class="list" style="margin-top:10px"></div>
-    </section>
-
-    <pre id="swState" class="mono small"></pre>
   </main>
 
+  <script>
+    // Service Workerの登録
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(() => console.log("Offline ready."));
+    }
+  </script>
   <script src="./app.js"></script>
 </body>
 </html>
