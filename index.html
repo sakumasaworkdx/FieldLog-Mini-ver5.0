@@ -3,36 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FieldLog v6.8 Professional</title>
+    <title>FieldLog v7.0 Final</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        body { background-color: #000; color: #fff; font-family: sans-serif; margin: 0; padding: 10px; }
-        .container { max-width: 600px; margin: auto; border: 1px solid #333; padding: 15px; border-radius: 15px; background: #0a0a0a; }
+        body { background-color: #000; color: #fff; font-family: sans-serif; margin: 0; padding: 10px; overflow-x: hidden; }
+        .container { max-width: 500px; margin: auto; }
         
-        /* カメラエリア */
-        #cameraPreview { width: 100%; border-radius: 10px; background: #222; margin-bottom: 10px; }
+        /* カメラプレビュー：1枚目の理想UIに合わせる */
+        #cameraPreview { width: 100%; border-radius: 10px; background: #222; margin-bottom: 10px; display: block; }
         
-        /* ボタン類 */
-        .btn { width: 100%; padding: 15px; border-radius: 10px; font-weight: bold; border: none; cursor: pointer; margin-bottom: 10px; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        /* ボタン類：画像の色と形を忠実に再現 */
+        .btn { width: 100%; padding: 16px; border-radius: 12px; font-weight: bold; border: none; cursor: pointer; margin-bottom: 12px; font-size: 17px; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .btn-green { background: #00c853; color: white; }
         .btn-blue { background: #007bff; color: white; }
-        .btn-red { background: #dc3545; color: white; font-size: 18px; margin-top: 10px; }
+        .btn-red { background: #e91e63; color: white; font-size: 20px; margin-top: 10px; height: 70px; }
         
         /* GPS表示枠 */
-        .info-box { background: #000; border: 1px solid #333; padding: 12px; border-radius: 10px; color: #00ff00; font-family: monospace; line-height: 1.5; margin-bottom: 15px; }
+        .info-box { background: #000; border: 1px solid #333; padding: 12px; border-radius: 10px; color: #00ff00; font-family: monospace; line-height: 1.6; margin-bottom: 15px; font-size: 15px; }
         
-        /* 入力項目 */
-        select, textarea { width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 5px; background: #1a1a1a; color: #fff; border: 1px solid #444; box-sizing: border-box; font-size: 16px; }
+        /* 入力エリア */
+        select, textarea { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 8px; background: #1a1a1a; color: #fff; border: 1px solid #444; box-sizing: border-box; font-size: 16px; }
         
-        /* 履歴・フィルタエリア */
-        .history-area { margin-top: 20px; border-top: 1px solid #333; padding-top: 20px; }
-        .filter-row { display: flex; gap: 5px; margin-bottom: 10px; }
-        .filter-row select { font-size: 12px; padding: 5px; margin-bottom: 0; }
+        /* 履歴フィルタ：理想の1枚目にあるプルダウン */
+        .history-section { margin-top: 30px; border-top: 2px solid #222; padding-top: 20px; }
+        .filter-group { display: flex; gap: 8px; margin-bottom: 12px; }
+        .filter-group select { font-size: 13px; padding: 8px; margin-bottom: 0; background: #222; }
         
         /* 履歴テーブル */
-        table { width: 100%; border-collapse: collapse; font-size: 10px; background: #111; }
-        th, td { border: 1px solid #333; padding: 5px; text-align: center; }
-        th { background: #222; color: #aaa; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; background: #050505; }
+        th, td { border: 1px solid #333; padding: 8px 4px; text-align: center; }
+        th { background: #111; color: #888; font-weight: normal; }
+        
+        .action-btns { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .btn-small { padding: 8px 15px; border-radius: 6px; font-size: 12px; border: none; color: white; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -53,15 +56,15 @@
         <textarea id="memo" placeholder="備考"></textarea>
 
         <button id="saveBtn" class="btn btn-red">💾 データを保存</button>
-        <p id="statusMsg" style="text-align:center; font-size:12px; color:#888;"></p>
+        <p id="statusMsg" style="text-align:center; color:#00ff00; font-size:14px; min-height:20px;"></p>
 
-        <div class="history-area">
-            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                <button id="exportBtn" style="background:#007bff; color:white; border:none; padding:8px 15px; border-radius:5px; font-size:12px;">🗳️ 一括ZIP保存</button>
-                <button id="clearAllBtn" style="background:#441111; color:white; border:none; padding:8px 15px; border-radius:5px; font-size:12px;">⚠️ 全削除</button>
+        <div class="history-section">
+            <div class="action-btns">
+                <button id="exportBtn" class="btn-small" style="background:#007bff;">🗳️ 一括ZIP保存</button>
+                <button id="clearAllBtn" class="btn-small" style="background:#441111;">⚠️ 全削除</button>
             </div>
 
-            <div class="filter-row">
+            <div class="filter-group">
                 <select id="filterLoc"><option value="">全ての地点</option></select>
                 <select id="filterItem"><option value="">全ての項目</option></select>
             </div>
@@ -69,9 +72,9 @@
             <table>
                 <thead>
                     <tr>
-                        <th>地点⇅</th>
-                        <th>小区分⇅</th>
-                        <th>項目⇅</th>
+                        <th style="width:25%">地点⇅</th>
+                        <th style="width:25%">小区分⇅</th>
+                        <th style="width:25%">項目⇅</th>
                         <th>GPS</th>
                         <th>写真</th>
                     </tr>
