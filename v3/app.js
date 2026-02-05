@@ -1,6 +1,4 @@
-/* FieldLog v6.5 - app.js
- * 機能: GPS/写真/属性記録, 縦横方位補正, ZIPフォルダ分け, 完全オフライン
- */
+/* FieldLog v6.5 - app.js */
 
 let db;
 let currentPosition = { lat: null, lng: null, heading: null, accuracy: null, headingStr: "-" };
@@ -18,8 +16,6 @@ const exportBtn = document.getElementById('exportBtn');
 const listContainer = document.getElementById('listContainer');
 const statusMsg = document.getElementById('statusMsg');
 const gpsStatus = document.getElementById('gpsStatus');
-
-const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
 
 // --- 1. IndexedDB 初期化 ---
 const DB_NAME = 'FieldLogDB_v6';
@@ -43,60 +39,24 @@ async function initCamera() {
 }
 initCamera();
 
-// --- 3. GPS & 方位（センサー）設定 & 縦横補正 ---
-
-// iOS対応の方位センサー開始
-async function startOrientation() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-            const permission = await DeviceOrientationEvent.requestPermission();
-            if (permission === 'granted') {
-                window.addEventListener('deviceorientation', handleOrientation, true);
-            }
-        } catch (err) { console.error("Orientation Permission Denied", err); }
-    } else {
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-        window.addEventListener('deviceorientation', handleOrientation, true);
-    }
-}
-
-function handleOrientation(event) {
-    let alpha = 0;
-    if (event.webkitCompassHeading) {
-        alpha = event.webkitCompassHeading; // iOS
-    } else if (event.alpha) {
-        alpha = 360 - event.alpha; // Android (時計回りに変換)
-    } else { return; }
-
-    // ★ 縦横補正: 端末を左/右に倒した時の角度(90/-90)を取得して加算
-    const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
-    const correctedHeading = (alpha + angle + 360) % 360;
-
-    currentPosition.heading = correctedHeading;
-    currentPosition.headingStr = DIR_NAMES[Math.round(correctedHeading / 22.5) % 16];
-    updateStatusDisplay();
-}
-
+// --- 3. GPS設定 ---
+const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
 function updateGPS() {
     if (!navigator.geolocation) return;
     navigator.geolocation.watchPosition((pos) => {
         currentPosition.lat = pos.coords.latitude;
         currentPosition.lng = pos.coords.longitude;
         currentPosition.accuracy = pos.coords.accuracy;
-        updateStatusDisplay();
+        currentPosition.heading = pos.coords.heading;
+        currentPosition.headingStr = pos.coords.heading !== null ? DIR_NAMES[Math.round(pos.coords.heading / 22.5) % 16] : "-";
+        
+        gpsStatus.textContent = `GPS: 精度${Math.round(pos.coords.accuracy)}m / 方位: ${currentPosition.headingStr}`;
+        gpsStatus.style.color = "green";
     }, null, { enableHighAccuracy: true });
 }
-
-function updateStatusDisplay() {
-    gpsStatus.textContent = `GPS: 精度${Math.round(currentPosition.accuracy || 0)}m / 方位: ${currentPosition.headingStr}`;
-    gpsStatus.style.color = currentPosition.accuracy ? "green" : "red";
-}
-
-// 初期化
 updateGPS();
-document.body.addEventListener('click', startOrientation, { once: true });
 
-// --- 4. CSV読込 & プルダウン連動 ---
+// --- 4. CSV連動 ---
 csvInput.addEventListener('change', e => {
     const reader = new FileReader();
     reader.onload = evt => {
@@ -128,7 +88,7 @@ function populateSelect(elem, items) {
     items.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; elem.appendChild(o); });
 }
 
-// --- 5. 記録保存 ---
+// --- 5. 保存 ---
 saveBtn.addEventListener('click', () => {
     const w = video.videoWidth, h = video.videoHeight;
     canvas.width = w; canvas.height = h;
@@ -154,9 +114,81 @@ saveBtn.addEventListener('click', () => {
     }, 'image/jpeg', 0.8);
 });
 
-// --- 6. 一覧表示・削除 ---
+// --- 6. 一覧 ---
 function loadList() {
     const tx = db.transaction(STORE_NAME, 'readonly');
     tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
         listContainer.innerHTML = "";
-        e.
+        e.target.result.reverse().forEach(r => {
+            const div = document.createElement('div');
+            div.className = "list-row";
+            div.innerHTML = `<span>[${r.point}] ${r.item}</span> 
+                             <div>
+                                <button onclick="viewImg('${URL.createObjectURL(r.photoBlob)}')" style="width:auto; display:inline;">◯</button>
+                                <button onclick="delRec(${r.id})" style="width:auto; display:inline; color:red;">×</button>
+                             </div>`;
+            listContainer.appendChild(div);
+        });
+    };
+}
+window.viewImg = (url) => window.open(url, '_blank');
+window.delRec = (id) => { if(confirm("データを削除しますか？")){ const tx = db.transaction(STORE_NAME, 'readwrite'); tx.objectStore(STORE_NAME).delete(id); tx.oncomplete = loadList; } };
+
+// --- 7. 書き出し (修正済みカスタムダイアログ) ---
+exportBtn.addEventListener('click', () => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
+        const records = e.target.result;
+        if (!records.length) return alert("データがありません");
+        showExportDialog(records);
+    };
+});
+
+function showExportDialog(records) {
+    const oldDlg = document.getElementById('customDlg');
+    if (oldDlg) oldDlg.remove();
+
+    const dlg = document.createElement('div');
+    dlg.id = 'customDlg';
+    dlg.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:0; border:1px solid #007bff; z-index:10000; box-shadow:0 10px 25px rgba(0,0,0,0.2); text-align:center; width:85%; max-width:350px; border-radius:12px; overflow:hidden; font-family:sans-serif;";
+    
+    dlg.innerHTML = `
+        <div style="background:#007bff; color:white; padding:12px; font-size:14px; font-weight:bold;">FieldLog システム書き出し</div>
+        <div style="padding:20px;">
+            <p style="font-size:15px; color:#333; margin-bottom:20px; line-height:1.4;">写真の保存形式を選択してください</p>
+            <button id="btnFoldered" style="display:block; width:100%; padding:14px; margin-bottom:10px; background:#007bff; color:white; border:none; border-radius:8px; font-size:16px; cursor:pointer;">地点ごとにフォルダ分け</button>
+            <button id="btnFlat" style="display:block; width:100%; padding:14px; margin-bottom:15px; background:#f8f9fa; color:#333; border:1px solid #ddd; border-radius:8px; font-size:16px; cursor:pointer;">フォルダ分けなし（一括）</button>
+            <button id="btnCancel" style="background:none; border:none; color:#666; text-decoration:underline; font-size:14px; cursor:pointer;">キャンセル</button>
+        </div>
+    `;
+    document.body.appendChild(dlg);
+
+    document.getElementById('btnFoldered').onclick = () => { dlg.remove(); createZip(records, true); };
+    document.getElementById('btnFlat').onclick = () => { dlg.remove(); createZip(records, false); };
+    document.getElementById('btnCancel').onclick = () => { dlg.remove(); };
+}
+
+function createZip(records, separateByLocation) {
+    const zip = new JSZip();
+    let csv = "日時,地点,小区分,項目,緯度,経度,方位角,方位名,ファイル名\n";
+    
+    records.forEach(r => {
+        csv += `${r.timestamp},${r.point},${r.sub},${r.item},${r.lat},${r.lng},${r.headingVal},${r.headingStr},${r.fileName}\n`;
+        let path = r.fileName;
+        if (separateByLocation) {
+            let folder = (r.point ? r.point.trim() : "未分類").replace(/[\\/:*?"<>|]/g, "_");
+            path = folder + "/" + r.fileName;
+        }
+        zip.file(path, r.photoBlob);
+    });
+    
+    zip.file("data.csv", csv);
+    statusMsg.textContent = "ZIP作成中...";
+    zip.generateAsync({ type: "blob" }).then(content => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(content);
+        a.download = `FieldLog_${new Date().getTime()}.zip`;
+        a.click();
+        statusMsg.textContent = "出力完了";
+    });
+}
