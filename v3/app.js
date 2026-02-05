@@ -1,179 +1,193 @@
-const APP_VERSION = "v3.0-final-integrated";
 const $ = (id) => document.getElementById(id);
+let db, currentGeo = null, currentFile = null, currentHeading = 0, currentDirName = "-";
 
-const els = {
-  listCsvInput: $("listCsvInput"),
-  btnClearLists: $("btnClearLists"),
-  listStatus: $("listStatus"),
-  selLocation: $("selLocation"),
-  selLocation2: $("selLocation2"),
-  selItem: $("selItem"),
-  photoInput: $("photoInput"),
-  btnGeo: $("btnGeo"),
-  btnSave: $("btnSave"),
-  btnExportZip: $("btnExportZip"),
-  btnClear: $("btnClear"),
-  lat: $("lat"),
-  lng: $("lng"),
-  acc: $("acc"),
-  memo: $("memo"),
-  memo2: $("memo2"),
-  preview: $("preview"),
-  autoName: $("autoName"),
-  ts: $("ts"),
-  list: $("list"),
-  count: $("count"),
-  exportStatus: $("exportStatus")
+// 1. データベース初期化 (旧版の安定したストア名と構造を維持)
+const req = indexedDB.open("offline_survey_pwa_db", 2);
+req.onupgradeneeded = (e) => {
+    const d = e.target.result;
+    if (!d.objectStoreNames.contains("surveys")) d.createObjectStore("surveys", { keyPath: "id" });
+    if (!d.objectStoreNames.contains("lists")) d.createObjectStore("lists", { keyPath: "id" });
 };
+req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-let currentGeo = null, currentFile = null, currentTs = null;
-let currentHeading = { val: 0, str: "-" };
-const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
-
-// ---- 方位ロジック (縦横補正あり) ----
-function handleOrientation(e) {
-  let h = e.webkitCompassHeading || (360 - e.alpha);
-  if (h !== undefined) {
-    const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
-    const corrected = (h + angle + 360) % 360;
-    currentHeading.val = Math.round(corrected);
-    currentHeading.str = DIR_NAMES[Math.round(corrected / 22.5) % 16];
-    
-    if (els.acc) {
-      const accVal = currentGeo ? Math.round(currentGeo.coords.accuracy) + "m" : "-m";
-      els.acc.textContent = `${accVal} (${currentHeading.str})`;
-    }
-  }
+// 2. 方位計算ロジック (縦横補正付き)
+function getDirectionName(deg) {
+    const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
+    return directions[Math.round(deg / 22.5) % 16];
 }
 
-// ---- GPS & 方位ボタン (旧版の安定起動を採用) ----
-if (els.btnGeo) {
-  els.btnGeo.onclick = async () => {
-    els.btnGeo.disabled = true;
-    els.btnGeo.textContent = "取得中...";
+function updateHeading(e) {
+    let h = e.webkitCompassHeading || (360 - e.alpha);
+    if (h !== undefined) {
+        const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
+        const corrected = (h + angle + 360) % 360;
+        currentHeading = Math.round(corrected);
+        currentDirName = getDirectionName(currentHeading);
+        // UI更新
+        if ($("heading")) $("heading").textContent = `${currentHeading}° (${currentDirName})`;
+        if ($("acc")) {
+            const accVal = currentGeo ? Math.round(currentGeo.coords.accuracy) + "m" : "-m";
+            $("acc").textContent = `${accVal} (${currentDirName})`;
+        }
+    }
+}
 
-    // 方位センサー起動
+// 3. GPS & 方位取得 (旧版の「絶対に動く」非同期スタイル)
+$("btnGeo").onclick = async () => {
+    const btn = $("btnGeo");
+    btn.disabled = true;
+    btn.textContent = "取得中...";
+    if($("geoCheck")) $("geoCheck").textContent = "⌛";
+
+    // 方位許可リクエスト
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        const state = await DeviceOrientationEvent.requestPermission();
-        if (state === 'granted') window.addEventListener("deviceorientation", handleOrientation, true);
-      } catch (e) { console.error(e); }
+        try {
+            const state = await DeviceOrientationEvent.requestPermission();
+            if (state === 'granted') window.addEventListener("deviceorientation", updateHeading, true);
+        } catch (e) { console.error(e); }
     } else {
-      window.addEventListener("deviceorientationabsolute", handleOrientation, true) || 
-      window.addEventListener("deviceorientation", handleOrientation, true);
+        window.addEventListener("deviceorientationabsolute", updateHeading, true) || 
+        window.addEventListener("deviceorientation", updateHeading, true);
     }
 
     // GPS取得
     navigator.geolocation.getCurrentPosition(
-      (p) => {
-        currentGeo = p;
-        els.lat.textContent = p.coords.latitude.toFixed(7);
-        els.lng.textContent = p.coords.longitude.toFixed(7);
-        els.acc.textContent = Math.round(p.coords.accuracy) + "m (" + currentHeading.str + ")";
-        els.btnGeo.disabled = false;
-        els.btnGeo.textContent = "GPS取得";
-      },
-      (err) => {
-        alert("GPS失敗: " + err.message);
-        els.btnGeo.disabled = false;
-        els.btnGeo.textContent = "GPS取得";
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        (p) => {
+            currentGeo = p;
+            if($("lat")) $("lat").textContent = p.coords.latitude.toFixed(7);
+            if($("lng")) $("lng").textContent = p.coords.longitude.toFixed(7);
+            if($("geoCheck")) $("geoCheck").textContent = "✅";
+            btn.disabled = false;
+            btn.textContent = "GPS取得";
+        },
+        (err) => {
+            alert("GPS失敗: " + err.message);
+            if($("geoCheck")) $("geoCheck").textContent = "❌";
+            btn.disabled = false;
+            btn.textContent = "GPS取得";
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
-  };
-}
-
-// ---- IndexedDB (最新版の records ストアを使用) ----
-const DB_NAME = "offline_survey_pwa_db";
-const STORE = "records";
-function openDB(){
-  return new Promise(res => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: "id" }); };
-    req.onsuccess = () => res(req.result);
-  });
-}
-async function dbPut(rec){ const db = await openDB(); const tx = db.transaction(STORE, "readwrite"); await tx.objectStore(STORE).put(rec); db.close(); }
-async function dbGetAll(){ const db = await openDB(); return new Promise(res => { const req = db.transaction(STORE, "readonly").objectStore(STORE).getAll(); req.onsuccess = () => { db.close(); res(req.result || []); }; }); }
-
-// ---- 最新プレビュー・保存機能 ----
-function pad2(n){ return String(n).padStart(2,"0"); }
-function formatTs(d){ return `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`; }
-
-if (els.photoInput) els.photoInput.onchange = () => {
-  currentFile = els.photoInput.files[0];
-  currentTs = new Date();
-  if (els.autoName) els.autoName.textContent = formatTs(currentTs) + "-01.jpg";
-  if (els.ts) els.ts.textContent = currentTs.toLocaleString();
-  if (currentFile && els.preview) {
-    const url = URL.createObjectURL(currentFile);
-    els.preview.src = url;
-  }
 };
 
-if (els.btnSave) els.btnSave.onclick = async () => {
-  if (!currentFile || !currentGeo) return alert("写真とGPSが必要です");
-  const ts = currentTs || new Date();
-  const rec = {
-    id: "id_" + Date.now(),
-    createdAt: ts.toISOString(),
-    lat: currentGeo.coords.latitude,
-    lng: currentGeo.coords.longitude,
-    acc: currentGeo.coords.accuracy,
-    headingVal: currentHeading.val,
-    headingStr: currentHeading.str,
-    location: els.selLocation.value,
-    location2: els.selLocation2 ? els.selLocation2.value : "",
-    item: els.selItem.value,
-    memo: els.memo.value,
-    memo2: els.memo2 ? els.memo2.value : "",
-    photoName: formatTs(ts) + "-01.jpg",
-    photoBlob: currentFile
-  };
-  await dbPut(rec);
-  alert("保存しました");
-  renderList();
-  // クリア処理
-  els.memo.value = "";
-  if (els.memo2) els.memo2.value = "";
-  els.photoInput.value = "";
-  currentFile = null;
+// 4. 写真プレビュー (最新版のリッチUI)
+$("photoInput").onchange = (e) => {
+    currentFile = e.target.files[0];
+    const ts = new Date();
+    const tsStr = `${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,"0")}${String(ts.getDate()).padStart(2,"0")}_${String(ts.getHours()).padStart(2,"0")}${String(ts.getMinutes()).padStart(2,"0")}${String(ts.getSeconds()).padStart(2,"0")}`;
+    
+    if(currentFile) {
+        if($("photoCheck")) $("photoCheck").textContent = "✅";
+        if($("autoName")) $("autoName").textContent = tsStr + "-01.jpg";
+        const reader = new FileReader();
+        reader.onload = (re) => {
+            $("imgPreview").src = re.target.result;
+            if($("previewContainer")) $("previewContainer").style.display = "block";
+        };
+        reader.readAsDataURL(currentFile);
+    }
 };
 
-async function renderList(){
-  const all = await dbGetAll();
-  all.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
-  if (els.count) els.count.textContent = all.length;
-  if (els.list) {
-    els.list.innerHTML = "";
-    all.slice(0, 50).forEach(r => {
-      const d = document.createElement("div");
-      d.className = "item";
-      d.innerHTML = `<img class="thumb" src="${URL.createObjectURL(r.photoBlob)}">
-        <div class="kv"><b>${r.photoName}</b><br><small>${r.location} / ${r.item} (${r.headingStr})</small></div>`;
-      els.list.appendChild(d);
+// 5. 保存ロジック (旧版DB構造 + 最新メタデータ)
+$("btnSave").onclick = async () => {
+    if (!currentFile || !currentGeo) return alert("写真とGPSが必要です");
+    const id = Date.now();
+    const rec = {
+        id: id,
+        createdAt: new Date().toISOString(),
+        lat: currentGeo.coords.latitude,
+        lng: currentGeo.coords.longitude,
+        heading: currentHeading,
+        headingName: currentDirName,
+        location: $("selLocation").value || "-",
+        subLocation: ($("selSubLocation") ? $("selSubLocation").value : "-"),
+        item: $("selItem").value || "-",
+        memo: $("memo").value,
+        photoName: $("autoName") ? $("autoName").textContent : `img_${id}.jpg`,
+        photoBlob: currentFile
+    };
+
+    const tx = db.transaction("surveys", "readwrite");
+    tx.objectStore("surveys").put(rec).onsuccess = () => {
+        alert("保存完了");
+        currentFile = null;
+        if($("previewContainer")) $("previewContainer").style.display = "none";
+        if($("photoCheck")) $("photoCheck").textContent = "";
+        $("memo").value = "";
+        renderTable(); 
+    };
+};
+
+// 6. 履歴表示 (テーブル形式)
+async function renderTable() {
+    if (!db) return;
+    const tx = db.transaction("surveys", "readonly");
+    tx.objectStore("surveys").getAll().onsuccess = (e) => {
+        const listEl = $("list");
+        if(!listEl) return;
+        listEl.innerHTML = "";
+        e.target.result.sort((a,b) => b.id - a.id).forEach(r => {
+            const tr = document.createElement("tr");
+            tr.style.fontSize = "11px";
+            tr.innerHTML = `<td>${r.location}</td><td>${r.item}</td><td class="photo-cell" style="cursor:pointer; color:#00bb55;">${r.photoBlob.size > 0 ? "◯" : "-"}</td><td>${r.lat !== 0 ? "◯" : "-"}</td>`;
+            if (r.photoBlob.size > 0) {
+                tr.querySelector(".photo-cell").onclick = () => {
+                    $("imgPreview").src = URL.createObjectURL(r.photoBlob);
+                    if($("previewContainer")) $("previewContainer").style.display = "block";
+                    if($("previewLabel")) $("previewLabel").innerHTML = `【履歴】${r.location}<br>方位: ${r.headingName}<br>${r.memo}`;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                };
+            }
+            listEl.appendChild(tr);
+        });
+    };
+}
+
+// 7. ZIP/CSV一括ダウンロード (高速ロジック)
+$("btnDownloadAll").onclick = async () => {
+    const tx = db.transaction("surveys", "readonly");
+    tx.objectStore("surveys").getAll().onsuccess = async (e) => {
+        const data = e.target.result;
+        if (!data.length) return alert("データなし");
+        const zip = new JSZip();
+        let csv = "\uFEFFID,日時,緯度,経度,方位,地点,項目,備考,写真名\n";
+        for (const r of data) {
+            csv += `${r.id},${r.createdAt},${r.lat},${r.lng},${r.headingName},${r.location},${r.item},"${r.memo.replace(/"/g,'""')}",${r.photoName}\n`;
+            if (r.photoBlob.size > 0) zip.file(r.photoName, await r.photoBlob.arrayBuffer());
+        }
+        zip.file("records.csv", csv);
+        const content = await zip.generateAsync({ type: "blob" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(content);
+        a.download = `survey_${Date.now()}.zip`;
+        a.click();
+    };
+};
+
+// 8. リスト読み込み (旧版のDB方式を維持)
+async function loadLists() {
+    if (!db) return;
+    db.transaction("lists", "readonly").objectStore("lists").getAll().onsuccess = (e) => {
+        const data = e.target.result;
+        const fill = (id, vals, lbl) => {
+            const el = $(id); if(!el) return;
+            el.innerHTML = `<option value="">${lbl}</option>`;
+            [...new Set(vals)].forEach(v => { if(v){ const o=document.createElement("option"); o.value=o.textContent=v; el.appendChild(o); }});
+        };
+        fill("selLocation", data.map(d => d.loc), "地点を選択");
+        fill("selItem", data.map(d => d.item), "項目を選択");
+    };
+}
+
+$("listCsvInput").onchange = async (e) => {
+    const file = e.target.files[0];
+    const text = await file.text();
+    const tx = db.transaction("lists", "readwrite");
+    const store = tx.objectStore("lists");
+    await store.clear();
+    text.split("\n").forEach((row, i) => {
+        const c = row.split(",");
+        if(c[0]) store.put({ id: i, loc: c[0].trim(), item: c[2] ? c[2].trim() : "" });
     });
-  }
-}
-
-// ---- CRC32 & 高速ZIP生成ロジック (最新版機能) ----
-const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let i=0;i<256;i++){ let c=i; for (let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; } return t; })();
-function crc32(u8){ let c=0xFFFFFFFF; for (let i=0;i<u8.length;i++) c=CRC_TABLE[(c^u8[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
-function u16(n){ return new Uint8Array([n&255,(n>>>8)&255]); }
-function u32(n){ return new Uint8Array([n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255]); }
-function strU8(s){ return new TextEncoder().encode(s); }
-function concatU8(p){ const len=p.reduce((a,b)=>a+b.length,0); const o=new Uint8Array(len); let f=0; for (const x of p){ o.set(x,f); f+=x.length; } return o; }
-function dosTime(date){
-  const d=new Date(date);
-  const dt=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
-  const tm=(d.getHours()<<11)|(d.getMinutes()<<5)|Math.floor(d.getSeconds()/2);
-  return {dt,tm};
-}
-function makeZip(files){
-  let lp=[], cp=[], off=0;
-  for (const f of files){
-    const n=strU8(f.name), d=f.data, c=crc32(d), {dt,tm}=dosTime(f.mtime);
-    const lh=concatU8([u32(0x04034b50),u16(20),u16(0),u16(0),u16(tm),u16(dt),u32(c),u32(d.length),u32(d.length),u16(n.length),u16(0),n]);
-    lp.push(lh,d);
-    const ch=concatU8([u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(tm),u16(dt),u32(c),u32(d.length),u32(d.length),u16(n.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(off),n]);
-    cp.push(ch); off+=lh.length+d.length;
+    tx.oncomplete = () => { alert("リスト更新"); loadLists(); };
+};
