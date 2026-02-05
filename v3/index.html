@@ -1,56 +1,70 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FieldLog v6.7</title>
-    <link rel="stylesheet" href="style.css"> <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22FieldLog%22,%22short_name%22:%22FieldLog%22,%22start_url%22:%22./%22,%22display%22:%22standalone%22}">
+  <title>FieldLog v6.5</title>
+  <style>
+    body { background:#000; color:#fff; font-family:sans-serif; margin:0; padding:10px; }
+    .card { background:#111; border:1px solid #333; padding:15px; border-radius:12px; margin-bottom:15px; }
+    .btn-main { width:100%; border-radius:12px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-weight:bold; }
+    .photo-btn { background:#00bb55; height:100px; font-size:20px; }
+    .geo-btn { background:#007bff; height:85px; font-size:18px; }
+    .btn-save { background:#dc3545; height:90px; font-size:24px; }
+    .geo-info-box { background:#000; color:#0f0; padding:15px; border-radius:8px; font-family:monospace; line-height:1.6; border:1px solid #333; margin-bottom:15px; }
+    .input-field { width:100%; background:#222; color:#fff; border:1px solid #444; padding:14px; border-radius:8px; margin-bottom:10px; font-size:16px; box-sizing:border-box; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    td { padding:10px; border-bottom:1px solid #333; }
+    summary { cursor:pointer; color:#aaa; padding:5px; }
+  </style>
 </head>
-<body style="background-color: #000; color: #fff; font-family: sans-serif;">
+<body>
+  <main style="max-width:500px; margin:0 auto;">
+    <details class="card">
+      <summary>⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
+      <input id="listCsvInput" type="file" accept=".csv" style="width:100%; margin-top:10px;">
+    </details>
 
-    <div class="container" style="padding: 10px; max-width: 500px; margin: auto;">
-        
-        <video id="cameraPreview" autoplay playsinline style="width: 100%; border-radius: 10px; background: #333;"></video>
-        <canvas id="photoCanvas" style="display: none;"></canvas>
+    <section class="card">
+      <label class="btn-main photo-btn">
+        <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none;">
+        <span style="font-size:35px; margin-right:15px;">📷</span> 写真を撮る <span id="photoCheck"></span>
+      </label>
+      <button id="btnGeo" class="btn-main geo-btn" type="button">
+        <span style="font-size:30px; margin-right:15px;">📍</span> 位置・方位を記録 <span id="geoCheck"></span>
+      </button>
+      <div id="previewContainer" style="text-align:center; display:none; margin-bottom:15px;"><img id="imgPreview" style="max-width:100%; border-radius:8px;"></div>
+      <div class="geo-info-box">緯度: <span id="lat">-</span><br>経度: <span id="lng">-</span><br>方位: <span id="heading">-</span></div>
+      <select id="selLocation" class="input-field"><option value="">地点を選択</option></select>
+      <select id="selSubLocation" class="input-field"><option value="">小区分を選択</option></select>
+      <select id="selItem" class="input-field"><option value="">項目を選択</option></select>
+      <textarea id="memo" class="input-field" style="height:80px;" placeholder="備考"></textarea>
+      <button id="btnSave" class="btn-save btn-main">💾 データを保存</button>
+    </section>
 
-        <div style="margin-top: 15px;">
-            <label for="photoInput" style="display: block; background: #00c853; padding: 15px; text-align: center; border-radius: 10px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">
-                📷 写真を撮る
-                <input type="file" id="photoInput" accept="image/*" capture="environment" style="display: none;">
-            </label>
-
-            <button id="btnGeo" style="width: 100%; background: #007bff; color: white; border: none; padding: 15px; border-radius: 10px; font-size: 16px; font-weight: bold; margin-bottom: 10px;">
-                📍 位置・方位を記録
-            </button>
-
-            <div id="gpsDisplay" style="background: #111; border: 1px solid #333; padding: 10px; border-radius: 10px; font-family: monospace; color: #00ff00; margin-bottom: 15px; line-height: 1.6;">
-                緯度: - <br>
-                経度: - <br>
-                方位: -
-            </div>
-
-            <select id="locationSelect" style="width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 5px; background: #222; color: #fff; border: 1px solid #444;"><option value="">地点</option></select>
-            <select id="subSelect" style="width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 5px; background: #222; color: #fff; border: 1px solid #444;"><option value="">小区分</option></select>
-            <select id="itemSelect" style="width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 5px; background: #222; color: #fff; border: 1px solid #444;"><option value="">項目</option></select>
-            
-            <textarea id="memo" placeholder="備考" style="width: 100%; padding: 12px; height: 80px; border-radius: 5px; background: #222; color: #fff; border: 1px solid #444; box-sizing: border-box;"></textarea>
-
-            <button id="saveBtn" style="width: 100%; background: #dc3545; color: white; border: none; padding: 15px; border-radius: 10px; font-size: 18px; font-weight: bold; margin-top: 15px;">
-                💾 データを保存
-            </button>
-            <p id="statusMsg" style="text-align: center; font-size: 14px; margin-top: 5px;"></p>
-        </div>
-
-        <hr style="border: 0.5px solid #333; margin: 20px 0;">
-
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <button id="exportBtn" style="background: #007bff; color: white; border: none; padding: 10px; border-radius: 5px;">🗳️ 一括ZIP保存</button>
-            <button id="clearAllBtn" style="background: #721c24; color: white; border: none; padding: 10px; border-radius: 5px;">⚠️ 全削除</button>
-        </div>
-
-        <div id="listContainer" style="margin-top: 15px; background: #111; border-radius: 5px;"></div>
-    </div>
-
-    <script src="app.js"></script>
+    <section class="card">
+      <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+        <button id="btnDownloadAll" style="background:#007bff; color:white; border:none; padding:12px; border-radius:8px; font-weight:bold;">📦 一括ZIP保存</button>
+        <button id="btnDeleteAll" style="background:#600; color:white; border:none; padding:12px; border-radius:8px;">⚠️ 全削除</button>
+      </div>
+      <table id="list"></table>
+    </section>
+  </main>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          installingWorker.onstatechange = () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              alert("最新版に更新されました。再起動してください。");
+            }
+          };
+        };
+      });
+    }
+  </script>
+  <script src="./app.js"></script>
 </body>
 </html>

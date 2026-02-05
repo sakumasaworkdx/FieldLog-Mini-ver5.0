@@ -1,88 +1,70 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FieldLog v7.0 Final</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <style>
-        body { background-color: #000; color: #fff; font-family: sans-serif; margin: 0; padding: 10px; overflow-x: hidden; }
-        .container { max-width: 500px; margin: auto; }
-        
-        /* カメラプレビュー：1枚目の理想UIに合わせる */
-        #cameraPreview { width: 100%; border-radius: 10px; background: #222; margin-bottom: 10px; display: block; }
-        
-        /* ボタン類：画像の色と形を忠実に再現 */
-        .btn { width: 100%; padding: 16px; border-radius: 12px; font-weight: bold; border: none; cursor: pointer; margin-bottom: 12px; font-size: 17px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .btn-green { background: #00c853; color: white; }
-        .btn-blue { background: #007bff; color: white; }
-        .btn-red { background: #e91e63; color: white; font-size: 20px; margin-top: 10px; height: 70px; }
-        
-        /* GPS表示枠 */
-        .info-box { background: #000; border: 1px solid #333; padding: 12px; border-radius: 10px; color: #00ff00; font-family: monospace; line-height: 1.6; margin-bottom: 15px; font-size: 15px; }
-        
-        /* 入力エリア */
-        select, textarea { width: 100%; padding: 14px; margin-bottom: 10px; border-radius: 8px; background: #1a1a1a; color: #fff; border: 1px solid #444; box-sizing: border-box; font-size: 16px; }
-        
-        /* 履歴フィルタ：理想の1枚目にあるプルダウン */
-        .history-section { margin-top: 30px; border-top: 2px solid #222; padding-top: 20px; }
-        .filter-group { display: flex; gap: 8px; margin-bottom: 12px; }
-        .filter-group select { font-size: 13px; padding: 8px; margin-bottom: 0; background: #222; }
-        
-        /* 履歴テーブル */
-        table { width: 100%; border-collapse: collapse; font-size: 11px; background: #050505; }
-        th, td { border: 1px solid #333; padding: 8px 4px; text-align: center; }
-        th { background: #111; color: #888; font-weight: normal; }
-        
-        .action-btns { display: flex; justify-content: space-between; margin-bottom: 15px; }
-        .btn-small { padding: 8px 15px; border-radius: 6px; font-size: 12px; border: none; color: white; font-weight: bold; }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22FieldLog%22,%22short_name%22:%22FieldLog%22,%22start_url%22:%22./%22,%22display%22:%22standalone%22}">
+  <title>FieldLog v6.5</title>
+  <style>
+    body { background:#000; color:#fff; font-family:sans-serif; margin:0; padding:10px; }
+    .card { background:#111; border:1px solid #333; padding:15px; border-radius:12px; margin-bottom:15px; }
+    .btn-main { width:100%; border-radius:12px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-weight:bold; }
+    .photo-btn { background:#00bb55; height:100px; font-size:20px; }
+    .geo-btn { background:#007bff; height:85px; font-size:18px; }
+    .btn-save { background:#dc3545; height:90px; font-size:24px; }
+    .geo-info-box { background:#000; color:#0f0; padding:15px; border-radius:8px; font-family:monospace; line-height:1.6; border:1px solid #333; margin-bottom:15px; }
+    .input-field { width:100%; background:#222; color:#fff; border:1px solid #444; padding:14px; border-radius:8px; margin-bottom:10px; font-size:16px; box-sizing:border-box; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    td { padding:10px; border-bottom:1px solid #333; }
+    summary { cursor:pointer; color:#aaa; padding:5px; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <video id="cameraPreview" autoplay playsinline></video>
-        <canvas id="photoCanvas" style="display: none;"></canvas>
+  <main style="max-width:500px; margin:0 auto;">
+    <details class="card">
+      <summary>⚙️ CSV読込 (A:地点, B:小区分, C:項目)</summary>
+      <input id="listCsvInput" type="file" accept=".csv" style="width:100%; margin-top:10px;">
+    </details>
 
-        <button id="snapBtn" class="btn btn-green">📷 写真を撮る</button>
-        <button id="btnGeo" class="btn btn-blue">📍 位置・方位を記録</button>
+    <section class="card">
+      <label class="btn-main photo-btn">
+        <input id="photoInput" type="file" accept="image/*" capture="environment" style="display:none;">
+        <span style="font-size:35px; margin-right:15px;">📷</span> 写真を撮る <span id="photoCheck"></span>
+      </label>
+      <button id="btnGeo" class="btn-main geo-btn" type="button">
+        <span style="font-size:30px; margin-right:15px;">📍</span> 位置・方位を記録 <span id="geoCheck"></span>
+      </button>
+      <div id="previewContainer" style="text-align:center; display:none; margin-bottom:15px;"><img id="imgPreview" style="max-width:100%; border-radius:8px;"></div>
+      <div class="geo-info-box">緯度: <span id="lat">-</span><br>経度: <span id="lng">-</span><br>方位: <span id="heading">-</span></div>
+      <select id="selLocation" class="input-field"><option value="">地点を選択</option></select>
+      <select id="selSubLocation" class="input-field"><option value="">小区分を選択</option></select>
+      <select id="selItem" class="input-field"><option value="">項目を選択</option></select>
+      <textarea id="memo" class="input-field" style="height:80px;" placeholder="備考"></textarea>
+      <button id="btnSave" class="btn-save btn-main">💾 データを保存</button>
+    </section>
 
-        <div id="gpsDisplay" class="info-box">
-            緯度: - <br> 経度: - <br> 方位: -
-        </div>
-
-        <select id="locationSelect"><option value="">地点</option></select>
-        <select id="subSelect"><option value="">小区分</option></select>
-        <select id="itemSelect"><option value="">項目</option></select>
-        <textarea id="memo" placeholder="備考"></textarea>
-
-        <button id="saveBtn" class="btn btn-red">💾 データを保存</button>
-        <p id="statusMsg" style="text-align:center; color:#00ff00; font-size:14px; min-height:20px;"></p>
-
-        <div class="history-section">
-            <div class="action-btns">
-                <button id="exportBtn" class="btn-small" style="background:#007bff;">🗳️ 一括ZIP保存</button>
-                <button id="clearAllBtn" class="btn-small" style="background:#441111;">⚠️ 全削除</button>
-            </div>
-
-            <div class="filter-group">
-                <select id="filterLoc"><option value="">全ての地点</option></select>
-                <select id="filterItem"><option value="">全ての項目</option></select>
-            </div>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width:25%">地点⇅</th>
-                        <th style="width:25%">小区分⇅</th>
-                        <th style="width:25%">項目⇅</th>
-                        <th>GPS</th>
-                        <th>写真</th>
-                    </tr>
-                </thead>
-                <tbody id="listBody"></tbody>
-            </table>
-        </div>
-    </div>
-    <script src="app.js"></script>
+    <section class="card">
+      <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+        <button id="btnDownloadAll" style="background:#007bff; color:white; border:none; padding:12px; border-radius:8px; font-weight:bold;">📦 一括ZIP保存</button>
+        <button id="btnDeleteAll" style="background:#600; color:white; border:none; padding:12px; border-radius:8px;">⚠️ 全削除</button>
+      </div>
+      <table id="list"></table>
+    </section>
+  </main>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          installingWorker.onstatechange = () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              alert("最新版に更新されました。再起動してください。");
+            }
+          };
+        };
+      });
+    }
+  </script>
+  <script src="./app.js"></script>
 </body>
 </html>

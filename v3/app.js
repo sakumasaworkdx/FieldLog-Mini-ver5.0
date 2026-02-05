@@ -1,170 +1,198 @@
-/* * FieldLog v6.7 - 安定版 app.js */
-
 const $ = (id) => document.getElementById(id);
+let db, currentGeo = null, currentFile = null, currentHeading = null;
+let currentSortCol = 'id', isSortAsc = false;
 
-// --- 1. グローバル変数 ---
-let db;
-let currentPosition = { lat: null, lng: null, heading: 0, headingStr: "-", accuracy: null };
-let currentFile = null;
-let masterData = [];
+// JSZipの読み込み
+if (typeof JSZip === "undefined") {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    document.head.appendChild(s);
+}
 
-// --- 2. IndexedDB 初期化 ---
-const DB_NAME = 'FieldLogDB_stable';
-const STORE_NAME = 'logs';
-const request = indexedDB.open(DB_NAME, 1);
-request.onupgradeneeded = (e) => {
-    db = e.target.result;
-    if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+const getDirectionName = (deg) => {
+    if (deg === null || deg === undefined || isNaN(deg)) return "-";
+    const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
+    const index = Math.round(deg / 22.5) % 16;
+    return directions[index];
+};
+
+const req = indexedDB.open("offline_field_log_v6", 1);
+req.onupgradeneeded = (e) => {
+    const d = e.target.result;
+    d.createObjectStore("surveys", { keyPath: "id" });
+    d.createObjectStore("lists", { keyPath: "id" });
+};
+req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
+
+navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
+window.addEventListener("deviceorientationabsolute", (e) => {
+    let h = e.webkitCompassHeading || (360 - e.alpha);
+    if (h !== undefined) currentHeading = Math.round(h);
+}, true);
+
+$("btnGeo").onclick = () => {
+    if(!currentGeo) return alert("GPS受信中...");
+    $("lat").textContent = currentGeo.coords.latitude.toFixed(6);
+    $("lng").textContent = currentGeo.coords.longitude.toFixed(6);
+    const dirName = getDirectionName(currentHeading);
+    $("heading").textContent = `${currentHeading || 0}° (${dirName})`;
+    $("geoCheck").textContent = "✅";
+};
+
+$("listCsvInput").onchange = async (e) => {
+    if(!e.target.files[0]) return;
+    const text = await e.target.files[0].text();
+    const rows = text.split(/\r?\n/).filter(r => r.trim() !== "");
+    const tx = db.transaction("lists", "readwrite");
+    const store = tx.objectStore("lists");
+    await store.clear();
+    rows.forEach((row, idx) => {
+        const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
+        store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
+    });
+    tx.oncomplete = () => { alert("読込完了"); loadLists(); };
+};
+
+async function loadLists() {
+    if (!db) return;
+    db.transaction("lists", "readonly").objectStore("lists").getAll().onsuccess = (e) => {
+        const d = e.target.result;
+        const upd = (id, vals, lbl) => {
+            $(id).innerHTML = `<option value="">${lbl}</option>` + [...new Set(vals)].filter(v=>v).map(v=>`<option value="${v}">${v}</option>`).join("");
+        };
+        upd("selLocation", d.map(x=>x.a), "地点");
+        upd("selSubLocation", d.map(x=>x.b), "小区分");
+        upd("selItem", d.map(x=>x.c), "項目");
+    };
+}
+
+$("photoInput").onchange = (e) => {
+    currentFile = e.target.files[0];
+    if(currentFile) {
+        $("photoCheck").textContent = "✅";
+        $("imgPreview").src = URL.createObjectURL(currentFile);
+        $("previewContainer").style.display = "block";
     }
 };
-request.onsuccess = (e) => { db = e.target.result; renderList(); };
 
-// --- 3. カメラプレビュー (オプション) ---
-async function startCamera() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        $('cameraPreview').srcObject = stream;
-    } catch (err) { console.log("Camera preview not available"); }
-}
-startCamera();
-
-// --- 4. GPS & 方位ロジック (縦横補正付き) ---
-const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
-
-function handleOrientation(e) {
-    let alpha = e.webkitCompassHeading || (360 - (e.alpha || 0));
-    const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
-    const corrected = (alpha + angle + 360) % 360;
-    currentPosition.heading = Math.round(corrected);
-    currentPosition.headingStr = DIR_NAMES[Math.round(corrected / 22.5) % 16];
-    updateGpsDisplay();
-}
-
-function updateGpsDisplay() {
-    $('gpsDisplay').innerHTML = `
-        緯度: ${currentPosition.lat ? currentPosition.lat.toFixed(7) : "-"} <br>
-        経度: ${currentPosition.lng ? currentPosition.lng.toFixed(7) : "-"} <br>
-        方位: ${currentPosition.headingStr} (${currentPosition.heading || 0}°)
-    `;
-}
-
-// ボタンクリック時にGPSと方位センサーを起動
-$('btnGeo').addEventListener('click', async () => {
-    $('btnGeo').textContent = "取得中...";
-    
-    // iOSの方位センサー許可
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-            const state = await DeviceOrientationEvent.requestPermission();
-            if (state === 'granted') window.addEventListener('deviceorientation', handleOrientation, true);
-        } catch (err) { console.error(err); }
-    } else {
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-    }
-
-    // 位置情報取得
-    navigator.geolocation.getCurrentPosition(
-        (pos) => {
-            currentPosition.lat = pos.coords.latitude;
-            currentPosition.lng = pos.coords.longitude;
-            currentPosition.accuracy = pos.coords.accuracy;
-            updateGpsDisplay();
-            $('btnGeo').textContent = "📍 位置・方位を記録";
-            $('btnGeo').style.background = "#007bff";
-        },
-        (err) => {
-            alert("GPSエラー: " + err.message);
-            $('btnGeo').textContent = "📍 位置・方位を記録";
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-    );
-});
-
-// --- 5. 写真選択時の処理 ---
-$('photoInput').addEventListener('change', (e) => {
-    currentFile = e.target.files[0];
-    $('statusMsg').textContent = "写真を選択しました";
-});
-
-// --- 6. 保存処理 ---
-$('saveBtn').addEventListener('click', async () => {
-    if (!currentFile) return alert("写真を撮ってください");
-    if (!currentPosition.lat) return alert("GPSを取得してください");
-
-    const record = {
-        timestamp: new Date().toLocaleString(),
-        point: $('locationSelect').value,
-        sub: $('subSelect').value,
-        item: $('itemSelect').value,
-        memo: $('memo').value,
-        lat: currentPosition.lat,
-        lng: currentPosition.lng,
-        heading: currentPosition.heading,
-        headingStr: currentPosition.headingStr,
-        photoBlob: currentFile,
-        fileName: `IMG_${Date.now()}.jpg`
+$("btnSave").onclick = () => {
+    if (!currentFile && $("lat").textContent === "-" && !$("memo").value && !$("selLocation").value) return alert("データなし");
+    const id = Date.now();
+    const dirName = getDirectionName(currentHeading);
+    const rec = {
+        id: id, createdAt: new Date().toLocaleString('ja-JP'),
+        lat: $("lat").textContent, lng: $("lng").textContent, 
+        headingValue: currentHeading !== null ? currentHeading : 0,
+        headingName: dirName,
+        location: $("selLocation").value || "(未選択)",
+        subLocation: $("selSubLocation").value || "",
+        item: $("selItem").value || "",
+        memo: $("memo").value,
+        photoName: currentFile ? `img_${id}.jpg` : null, 
+        photoBlob: currentFile
     };
-
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).add(record);
-    tx.oncomplete = () => {
-        $('statusMsg').textContent = "保存完了！";
-        $('memo').value = "";
-        currentFile = null;
-        renderList();
+    db.transaction("surveys", "readwrite").objectStore("surveys").put(rec).onsuccess = () => {
+        alert("保存完了");
+        currentFile = null; $("photoCheck").textContent = ""; $("geoCheck").textContent = "";
+        $("lat").textContent = "-"; $("lng").textContent = "-"; $("heading").textContent = "-";
+        $("memo").value = ""; $("previewContainer").style.display = "none";
+        renderTable();
     };
-});
+};
 
-// --- 7. ZIP保存 (フォルダ分け) ---
-$('exportBtn').addEventListener('click', () => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
-        const records = e.target.result;
-        if (!records.length) return alert("データがありません");
-
-        const separate = confirm("地点ごとにフォルダ分けしますか？");
+$("btnDownloadAll").onclick = async () => {
+    if (typeof JSZip === "undefined") return alert("JSZip準備中");
+    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
+        const data = e.target.result;
+        if (!data.length) return alert("データなし");
         const zip = new JSZip();
-        let csv = "\ufeff日時,地点,小区分,項目,緯度,経度,方位,備考,ファイル名\n";
-
-        records.forEach(r => {
-            csv += `${r.timestamp},${r.point},${r.sub},${r.item},${r.lat},${r.lng},${r.headingStr},${r.memo},${r.fileName}\n`;
-            let path = r.fileName;
-            if (separate && r.point) {
-                path = `${r.point.replace(/[\\/:*?"<>|]/g, "_")}/${r.fileName}`;
-            }
-            zip.file(path, r.photoBlob);
-        });
+        let csv = "\ufeff日時,緯度,経度,方位角(°),方位名,地点,小区分,項目,備考,写真ファイル名\n";
+        for (const r of data) {
+            csv += `${r.createdAt},${r.lat},${r.lng},${r.headingValue},${r.headingName},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
+            if (r.photoBlob) zip.file(r.photoName, r.photoBlob);
+        }
         zip.file("data.csv", csv);
-        zip.generateAsync({type:"blob"}).then(blob => {
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = `FieldLog_${Date.now()}.zip`;
-            a.click();
-        });
+        const blob = await zip.generateAsync({type:"blob"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `survey_${Date.now()}.zip`;
+        a.click();
     };
-});
+};
 
-// リスト表示
-function renderList() {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
-        const list = $('listContainer');
-        list.innerHTML = "";
-        e.target.result.reverse().slice(0, 10).forEach(r => {
-            const div = document.createElement('div');
-            div.style = "padding: 10px; border-bottom: 1px solid #333; font-size: 12px;";
-            div.textContent = `${r.timestamp} [${r.point}] ${r.item}`;
-            list.appendChild(div);
+// --- 絞り込み・ソート機能 ---
+function toggleSort(col) {
+    if (currentSortCol === col) isSortAsc = !isSortAsc;
+    else { currentSortCol = col; isSortAsc = true; }
+    renderTable();
+}
+
+function renderTable() {
+    if(!db) return;
+    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
+        let allData = e.target.result;
+        
+        // 既存のフィルター値を取得
+        const fLoc = $("filterLoc") ? $("filterLoc").value : "";
+        const fItem = $("filterItem") ? $("filterItem").value : "";
+
+        // 絞り込み実行
+        let filteredData = allData.filter(r => {
+            return (fLoc === "" || r.location === fLoc) && (fItem === "" || r.item === fItem);
         });
+
+        // ソート
+        filteredData.sort((a, b) => {
+            let valA = a[currentSortCol], valB = b[currentSortCol];
+            if (valA < valB) return isSortAsc ? -1 : 1;
+            if (valA > valB) return isSortAsc ? 1 : -1;
+            return 0;
+        });
+
+        // フィルター用のプルダウン選択肢（全データから重複なく生成）
+        const locOptions = [...new Set(allData.map(r => r.location))].filter(v=>v);
+        const itemOptions = [...new Set(allData.map(r => r.item))].filter(v=>v);
+
+        let html = `
+            <div style="display:flex; gap:5px; margin-bottom:10px;">
+                <select id="filterLoc" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
+                    <option value="">全ての地点</option>
+                    ${locOptions.map(v => `<option value="${v}" ${v===fLoc?'selected':''}>${v}</option>`).join("")}
+                </select>
+                <select id="filterItem" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
+                    <option value="">全ての項目</option>
+                    ${itemOptions.map(v => `<option value="${v}" ${v===fItem?'selected':''}>${v}</option>`).join("")}
+                </select>
+            </div>
+            <table style="font-size:10px; width:100%; border-collapse:collapse;">
+            <tr style="background:#222; color:#aaa; cursor:pointer;">
+                <th onclick="toggleSort('location')" style="padding:5px; border:1px solid #333;">地点⇅</th>
+                <th onclick="toggleSort('subLocation')" style="padding:5px; border:1px solid #333;">小区分⇅</th>
+                <th onclick="toggleSort('item')" style="padding:5px; border:1px solid #333;">項目⇅</th>
+                <th style="padding:5px; border:1px solid #333;">GPS</th>
+                <th style="padding:5px; border:1px solid #333;">写真</th>
+            </tr>`;
+        
+        filteredData.forEach(r => {
+            const gpsStatus = (r.lat !== "-") ? "✅" : "-";
+            const photoBtn = r.photoBlob ? `<button onclick="window.open('${URL.createObjectURL(r.photoBlob)}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>` : "-";
+            html += `<tr>
+                <td style="padding:5px; border:1px solid #333;">${r.location}</td>
+                <td style="padding:5px; border:1px solid #333;">${r.subLocation}</td>
+                <td style="padding:5px; border:1px solid #333;">${r.item}</td>
+                <td style="text-align:center; border:1px solid #333;">${gpsStatus}</td>
+                <td style="text-align:center; border:1px solid #333;">${photoBtn}</td>
+            </tr>`;
+        });
+        html += `</table>`;
+        $("list").innerHTML = html;
     };
 }
 
-// 全削除
-$('clearAllBtn').addEventListener('click', () => {
-    if (confirm("全データを削除しますか？")) {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).clear();
-        tx.oncomplete = () => renderList();
+window.toggleSort = toggleSort;
+
+$("btnDeleteAll").onclick = () => {
+    if(confirm("全消去しますか？")) {
+        db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
     }
-});
+};
