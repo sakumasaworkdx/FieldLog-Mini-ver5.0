@@ -1,198 +1,194 @@
-const $ = (id) => document.getElementById(id);
-let db, currentGeo = null, currentFile = null, currentHeading = null;
-let currentSortCol = 'id', isSortAsc = false;
+/* FieldLog v6.5 - app.js */
 
-// JSZipの読み込み
-if (typeof JSZip === "undefined") {
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-    document.head.appendChild(s);
+let db;
+let currentPosition = { lat: null, lng: null, heading: null, accuracy: null, headingStr: "-" };
+let stream = null;
+let masterData = [];
+
+const video = document.getElementById('cameraPreview');
+const canvas = document.getElementById('photoCanvas');
+const locationSelect = document.getElementById('locationSelect'); 
+const subSelect = document.getElementById('subSelect');           
+const itemSelect = document.getElementById('itemSelect');         
+const csvInput = document.getElementById('csvInput');             
+const saveBtn = document.getElementById('saveBtn');
+const exportBtn = document.getElementById('exportBtn');
+const listContainer = document.getElementById('listContainer');
+const statusMsg = document.getElementById('statusMsg');
+const gpsStatus = document.getElementById('gpsStatus');
+
+// --- 1. IndexedDB 初期化 ---
+const DB_NAME = 'FieldLogDB_v6';
+const STORE_NAME = 'logs';
+
+const request = indexedDB.open(DB_NAME, 1);
+request.onupgradeneeded = (e) => {
+    db = e.target.result;
+    if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+    }
+};
+request.onsuccess = (e) => { db = e.target.result; loadList(); };
+
+// --- 2. カメラ起動 ---
+async function initCamera() {
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        video.srcObject = stream;
+    } catch (err) { statusMsg.textContent = "カメラエラー: " + err.message; }
+}
+initCamera();
+
+// --- 3. GPS設定 ---
+const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
+function updateGPS() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.watchPosition((pos) => {
+        currentPosition.lat = pos.coords.latitude;
+        currentPosition.lng = pos.coords.longitude;
+        currentPosition.accuracy = pos.coords.accuracy;
+        currentPosition.heading = pos.coords.heading;
+        currentPosition.headingStr = pos.coords.heading !== null ? DIR_NAMES[Math.round(pos.coords.heading / 22.5) % 16] : "-";
+        
+        gpsStatus.textContent = `GPS: 精度${Math.round(pos.coords.accuracy)}m / 方位: ${currentPosition.headingStr}`;
+        gpsStatus.style.color = "green";
+    }, null, { enableHighAccuracy: true });
+}
+updateGPS();
+
+// --- 4. CSV連動 ---
+csvInput.addEventListener('change', e => {
+    const reader = new FileReader();
+    reader.onload = evt => {
+        const lines = evt.target.result.split(/\r\n|\n/);
+        masterData = lines.filter(l => l.trim()).map(l => {
+            const c = l.split(',');
+            return { loc: c[0]?.trim(), sub: c[1]?.trim(), item: c[2]?.trim() };
+        });
+        const locSet = new Set(masterData.map(d => d.loc).filter(v => v));
+        populateSelect(locationSelect, Array.from(locSet));
+        statusMsg.textContent = "CSV読込完了";
+    };
+    reader.readAsText(e.target.files[0], 'Shift_JIS');
+});
+
+locationSelect.addEventListener('change', () => {
+    const filtered = masterData.filter(d => d.loc === locationSelect.value);
+    populateSelect(subSelect, Array.from(new Set(filtered.map(d => d.sub).filter(v => v))));
+    itemSelect.innerHTML = '<option value="">項目を選択</option>';
+});
+
+subSelect.addEventListener('change', () => {
+    const filtered = masterData.filter(d => d.loc === locationSelect.value && d.sub === subSelect.value);
+    populateSelect(itemSelect, Array.from(new Set(filtered.map(d => d.item).filter(v => v))));
+});
+
+function populateSelect(elem, items) {
+    elem.innerHTML = '<option value="">選択してください</option>';
+    items.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; elem.appendChild(o); });
 }
 
-const getDirectionName = (deg) => {
-    if (deg === null || deg === undefined || isNaN(deg)) return "-";
-    const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
-    const index = Math.round(deg / 22.5) % 16;
-    return directions[index];
-};
-
-const req = indexedDB.open("offline_field_log_v6", 1);
-req.onupgradeneeded = (e) => {
-    const d = e.target.result;
-    d.createObjectStore("surveys", { keyPath: "id" });
-    d.createObjectStore("lists", { keyPath: "id" });
-};
-req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
-
-navigator.geolocation.watchPosition(p => { currentGeo = p; }, null, {enableHighAccuracy:true});
-window.addEventListener("deviceorientationabsolute", (e) => {
-    let h = e.webkitCompassHeading || (360 - e.alpha);
-    if (h !== undefined) currentHeading = Math.round(h);
-}, true);
-
-$("btnGeo").onclick = () => {
-    if(!currentGeo) return alert("GPS受信中...");
-    $("lat").textContent = currentGeo.coords.latitude.toFixed(6);
-    $("lng").textContent = currentGeo.coords.longitude.toFixed(6);
-    const dirName = getDirectionName(currentHeading);
-    $("heading").textContent = `${currentHeading || 0}° (${dirName})`;
-    $("geoCheck").textContent = "✅";
-};
-
-$("listCsvInput").onchange = async (e) => {
-    if(!e.target.files[0]) return;
-    const text = await e.target.files[0].text();
-    const rows = text.split(/\r?\n/).filter(r => r.trim() !== "");
-    const tx = db.transaction("lists", "readwrite");
-    const store = tx.objectStore("lists");
-    await store.clear();
-    rows.forEach((row, idx) => {
-        const c = row.split(",").map(v => v.replace(/["']/g, "").trim());
-        store.put({ id: idx, a: c[0]||"", b: c[1]||"", c: c[2]||"" });
-    });
-    tx.oncomplete = () => { alert("読込完了"); loadLists(); };
-};
-
-async function loadLists() {
-    if (!db) return;
-    db.transaction("lists", "readonly").objectStore("lists").getAll().onsuccess = (e) => {
-        const d = e.target.result;
-        const upd = (id, vals, lbl) => {
-            $(id).innerHTML = `<option value="">${lbl}</option>` + [...new Set(vals)].filter(v=>v).map(v=>`<option value="${v}">${v}</option>`).join("");
+// --- 5. 保存 ---
+saveBtn.addEventListener('click', () => {
+    const w = video.videoWidth, h = video.videoHeight;
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    canvas.toBlob(blob => {
+        const now = new Date();
+        const ts = now.getFullYear() + ('0'+(now.getMonth()+1)).slice(-2) + ('0'+now.getDate()).slice(-2) + "_" + ('0'+now.getHours()).slice(-2) + ('0'+now.getMinutes()).slice(-2) + ('0'+now.getSeconds()).slice(-2);
+        const record = {
+            timestamp: now.toLocaleString(),
+            fileName: `IMG_${ts}.jpg`,
+            point: locationSelect.value || "",
+            sub: subSelect.value || "",
+            item: itemSelect.value || "",
+            lat: currentPosition.lat || 0,
+            lng: currentPosition.lng || 0,
+            headingVal: currentPosition.heading || 0,
+            headingStr: currentPosition.headingStr || "-",
+            photoBlob: blob
         };
-        upd("selLocation", d.map(x=>x.a), "地点");
-        upd("selSubLocation", d.map(x=>x.b), "小区分");
-        upd("selItem", d.map(x=>x.c), "項目");
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).add(record);
+        tx.oncomplete = () => { statusMsg.textContent = "保存完了"; loadList(); };
+    }, 'image/jpeg', 0.8);
+});
+
+// --- 6. 一覧 ---
+function loadList() {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
+        listContainer.innerHTML = "";
+        e.target.result.reverse().forEach(r => {
+            const div = document.createElement('div');
+            div.className = "list-row";
+            div.innerHTML = `<span>[${r.point}] ${r.item}</span> 
+                             <div>
+                                <button onclick="viewImg('${URL.createObjectURL(r.photoBlob)}')" style="width:auto; display:inline;">◯</button>
+                                <button onclick="delRec(${r.id})" style="width:auto; display:inline; color:red;">×</button>
+                             </div>`;
+            listContainer.appendChild(div);
+        });
     };
 }
+window.viewImg = (url) => window.open(url, '_blank');
+window.delRec = (id) => { if(confirm("データを削除しますか？")){ const tx = db.transaction(STORE_NAME, 'readwrite'); tx.objectStore(STORE_NAME).delete(id); tx.oncomplete = loadList; } };
 
-$("photoInput").onchange = (e) => {
-    currentFile = e.target.files[0];
-    if(currentFile) {
-        $("photoCheck").textContent = "✅";
-        $("imgPreview").src = URL.createObjectURL(currentFile);
-        $("previewContainer").style.display = "block";
-    }
-};
-
-$("btnSave").onclick = () => {
-    if (!currentFile && $("lat").textContent === "-" && !$("memo").value && !$("selLocation").value) return alert("データなし");
-    const id = Date.now();
-    const dirName = getDirectionName(currentHeading);
-    const rec = {
-        id: id, createdAt: new Date().toLocaleString('ja-JP'),
-        lat: $("lat").textContent, lng: $("lng").textContent, 
-        headingValue: currentHeading !== null ? currentHeading : 0,
-        headingName: dirName,
-        location: $("selLocation").value || "(未選択)",
-        subLocation: $("selSubLocation").value || "",
-        item: $("selItem").value || "",
-        memo: $("memo").value,
-        photoName: currentFile ? `img_${id}.jpg` : null, 
-        photoBlob: currentFile
+// --- 7. 書き出し (修正済みカスタムダイアログ) ---
+exportBtn.addEventListener('click', () => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    tx.objectStore(STORE_NAME).getAll().onsuccess = (e) => {
+        const records = e.target.result;
+        if (!records.length) return alert("データがありません");
+        showExportDialog(records);
     };
-    db.transaction("surveys", "readwrite").objectStore("surveys").put(rec).onsuccess = () => {
-        alert("保存完了");
-        currentFile = null; $("photoCheck").textContent = ""; $("geoCheck").textContent = "";
-        $("lat").textContent = "-"; $("lng").textContent = "-"; $("heading").textContent = "-";
-        $("memo").value = ""; $("previewContainer").style.display = "none";
-        renderTable();
-    };
-};
+});
 
-$("btnDownloadAll").onclick = async () => {
-    if (typeof JSZip === "undefined") return alert("JSZip準備中");
-    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = async (e) => {
-        const data = e.target.result;
-        if (!data.length) return alert("データなし");
-        const zip = new JSZip();
-        let csv = "\ufeff日時,緯度,経度,方位角(°),方位名,地点,小区分,項目,備考,写真ファイル名\n";
-        for (const r of data) {
-            csv += `${r.createdAt},${r.lat},${r.lng},${r.headingValue},${r.headingName},${r.location},${r.subLocation},${r.item},"${r.memo}",${r.photoName||""}\n`;
-            if (r.photoBlob) zip.file(r.photoName, r.photoBlob);
+function showExportDialog(records) {
+    const oldDlg = document.getElementById('customDlg');
+    if (oldDlg) oldDlg.remove();
+
+    const dlg = document.createElement('div');
+    dlg.id = 'customDlg';
+    dlg.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:0; border:1px solid #007bff; z-index:10000; box-shadow:0 10px 25px rgba(0,0,0,0.2); text-align:center; width:85%; max-width:350px; border-radius:12px; overflow:hidden; font-family:sans-serif;";
+    
+    dlg.innerHTML = `
+        <div style="background:#007bff; color:white; padding:12px; font-size:14px; font-weight:bold;">FieldLog システム書き出し</div>
+        <div style="padding:20px;">
+            <p style="font-size:15px; color:#333; margin-bottom:20px; line-height:1.4;">写真の保存形式を選択してください</p>
+            <button id="btnFoldered" style="display:block; width:100%; padding:14px; margin-bottom:10px; background:#007bff; color:white; border:none; border-radius:8px; font-size:16px; cursor:pointer;">地点ごとにフォルダ分け</button>
+            <button id="btnFlat" style="display:block; width:100%; padding:14px; margin-bottom:15px; background:#f8f9fa; color:#333; border:1px solid #ddd; border-radius:8px; font-size:16px; cursor:pointer;">フォルダ分けなし（一括）</button>
+            <button id="btnCancel" style="background:none; border:none; color:#666; text-decoration:underline; font-size:14px; cursor:pointer;">キャンセル</button>
+        </div>
+    `;
+    document.body.appendChild(dlg);
+
+    document.getElementById('btnFoldered').onclick = () => { dlg.remove(); createZip(records, true); };
+    document.getElementById('btnFlat').onclick = () => { dlg.remove(); createZip(records, false); };
+    document.getElementById('btnCancel').onclick = () => { dlg.remove(); };
+}
+
+function createZip(records, separateByLocation) {
+    const zip = new JSZip();
+    let csv = "日時,地点,小区分,項目,緯度,経度,方位角,方位名,ファイル名\n";
+    
+    records.forEach(r => {
+        csv += `${r.timestamp},${r.point},${r.sub},${r.item},${r.lat},${r.lng},${r.headingVal},${r.headingStr},${r.fileName}\n`;
+        let path = r.fileName;
+        if (separateByLocation) {
+            let folder = (r.point ? r.point.trim() : "未分類").replace(/[\\/:*?"<>|]/g, "_");
+            path = folder + "/" + r.fileName;
         }
-        zip.file("data.csv", csv);
-        const blob = await zip.generateAsync({type:"blob"});
+        zip.file(path, r.photoBlob);
+    });
+    
+    zip.file("data.csv", csv);
+    statusMsg.textContent = "ZIP作成中...";
+    zip.generateAsync({ type: "blob" }).then(content => {
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `survey_${Date.now()}.zip`;
+        a.href = URL.createObjectURL(content);
+        a.download = `FieldLog_${new Date().getTime()}.zip`;
         a.click();
-    };
-};
-
-// --- 絞り込み・ソート機能 ---
-function toggleSort(col) {
-    if (currentSortCol === col) isSortAsc = !isSortAsc;
-    else { currentSortCol = col; isSortAsc = true; }
-    renderTable();
+        statusMsg.textContent = "出力完了";
+    });
 }
-
-function renderTable() {
-    if(!db) return;
-    db.transaction("surveys", "readonly").objectStore("surveys").getAll().onsuccess = (e) => {
-        let allData = e.target.result;
-        
-        // 既存のフィルター値を取得
-        const fLoc = $("filterLoc") ? $("filterLoc").value : "";
-        const fItem = $("filterItem") ? $("filterItem").value : "";
-
-        // 絞り込み実行
-        let filteredData = allData.filter(r => {
-            return (fLoc === "" || r.location === fLoc) && (fItem === "" || r.item === fItem);
-        });
-
-        // ソート
-        filteredData.sort((a, b) => {
-            let valA = a[currentSortCol], valB = b[currentSortCol];
-            if (valA < valB) return isSortAsc ? -1 : 1;
-            if (valA > valB) return isSortAsc ? 1 : -1;
-            return 0;
-        });
-
-        // フィルター用のプルダウン選択肢（全データから重複なく生成）
-        const locOptions = [...new Set(allData.map(r => r.location))].filter(v=>v);
-        const itemOptions = [...new Set(allData.map(r => r.item))].filter(v=>v);
-
-        let html = `
-            <div style="display:flex; gap:5px; margin-bottom:10px;">
-                <select id="filterLoc" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
-                    <option value="">全ての地点</option>
-                    ${locOptions.map(v => `<option value="${v}" ${v===fLoc?'selected':''}>${v}</option>`).join("")}
-                </select>
-                <select id="filterItem" class="input-field" style="margin-bottom:0; font-size:12px;" onchange="renderTable()">
-                    <option value="">全ての項目</option>
-                    ${itemOptions.map(v => `<option value="${v}" ${v===fItem?'selected':''}>${v}</option>`).join("")}
-                </select>
-            </div>
-            <table style="font-size:10px; width:100%; border-collapse:collapse;">
-            <tr style="background:#222; color:#aaa; cursor:pointer;">
-                <th onclick="toggleSort('location')" style="padding:5px; border:1px solid #333;">地点⇅</th>
-                <th onclick="toggleSort('subLocation')" style="padding:5px; border:1px solid #333;">小区分⇅</th>
-                <th onclick="toggleSort('item')" style="padding:5px; border:1px solid #333;">項目⇅</th>
-                <th style="padding:5px; border:1px solid #333;">GPS</th>
-                <th style="padding:5px; border:1px solid #333;">写真</th>
-            </tr>`;
-        
-        filteredData.forEach(r => {
-            const gpsStatus = (r.lat !== "-") ? "✅" : "-";
-            const photoBtn = r.photoBlob ? `<button onclick="window.open('${URL.createObjectURL(r.photoBlob)}')" style="background:#00bb55; color:white; border:none; border-radius:4px; padding:2px 8px;">◯</button>` : "-";
-            html += `<tr>
-                <td style="padding:5px; border:1px solid #333;">${r.location}</td>
-                <td style="padding:5px; border:1px solid #333;">${r.subLocation}</td>
-                <td style="padding:5px; border:1px solid #333;">${r.item}</td>
-                <td style="text-align:center; border:1px solid #333;">${gpsStatus}</td>
-                <td style="text-align:center; border:1px solid #333;">${photoBtn}</td>
-            </tr>`;
-        });
-        html += `</table>`;
-        $("list").innerHTML = html;
-    };
-}
-
-window.toggleSort = toggleSort;
-
-$("btnDeleteAll").onclick = () => {
-    if(confirm("全消去しますか？")) {
-        db.transaction("surveys", "readwrite").objectStore("surveys").clear().onsuccess = () => renderTable();
-    }
-};
