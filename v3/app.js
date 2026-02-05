@@ -1,76 +1,71 @@
-// --- 方位管理変数 ---
-let currentHeading = { val: 0, str: "-" };
-const DIR_NAMES = ["北","北北東","北東","東北東","東","東南東","南東","南南東","南","南南西","南西","西南西","西","西北西","北西","北北西","北"];
+const $ = (id) => document.getElementById(id);
+let db, currentGeo = null, currentFile = null, currentHeading = null, currentDirName = "-";
 
-// 方位を計算・表示する関数
-function handleOrientation(event) {
-    let alpha = 0;
-    if (event.webkitCompassHeading) {
-        alpha = event.webkitCompassHeading; // iOS用
-    } else if (event.alpha) {
-        alpha = 360 - event.alpha; // Android用
-    }
+const req = indexedDB.open("offline_survey_pwa_db", 2);
+req.onupgradeneeded = (e) => {
+    const d = e.target.result;
+    if (!d.objectStoreNames.contains("surveys")) d.createStore("surveys", { keyPath: "id" });
+    if (!d.objectStoreNames.contains("lists")) d.createStore("lists", { keyPath: "id" });
+};
+req.onsuccess = (e) => { db = e.target.result; renderTable(); loadLists(); };
 
-    // 縦横補正を加味
-    const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
-    const corrected = (alpha + angle + 360) % 360;
+// 16方位変換
+function getDirectionName(deg) {
+    if (deg === null || deg === undefined) return "-";
+    const directions = ["北", "北北東", "北東", "東北東", "東", "東南東", "南東", "南南東", "南", "南南西", "南西", "西南西", "西", "西北西", "北西", "北北西"];
+    const index = Math.round(deg / 22.5) % 16;
+    return directions[index];
+}
 
-    currentHeading.val = Math.round(corrected);
-    currentHeading.str = DIR_NAMES[Math.round(corrected / 22.5) % 16];
-
-    // GPSが既に取れていれば、accの横を書き換える
-    if (els.acc) {
-        const accVal = (currentGeo && currentGeo.coords) ? Math.round(currentGeo.coords.accuracy) + "m" : "-m";
-        els.acc.textContent = `${accVal} (${currentHeading.str})`;
+// 方位更新（★縦横補正を追加）
+function updateHeading(e) {
+    let h = e.webkitCompassHeading || (360 - e.alpha);
+    if (h !== undefined) {
+        // ★画面の回転角（0:縦, 90:横, -90:逆横）を取得して補正
+        const angle = window.screen.orientation ? window.screen.orientation.angle : (window.orientation || 0);
+        const corrected = (h + angle + 360) % 360;
+        
+        currentHeading = Math.round(corrected);
+        currentDirName = getDirectionName(currentHeading);
+        $("heading").textContent = `${currentHeading}° (${currentDirName})`;
     }
 }
 
-// --- GPS取得ボタンのクリックイベント ---
-if (els.btnGeo) {
-    els.btnGeo.onclick = async () => {
-        els.btnGeo.disabled = true;
-        els.btnGeo.textContent = "取得中...";
+// GPS & 方位取得ボタン（★干渉しないように分離して実行）
+$("btnGeo").onclick = async () => {
+    $("geoCheck").textContent = "⌛";
 
-        // 1. まず方位センサーを叩き起こす（これが最優先）
-        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-            try {
-                const response = await DeviceOrientationEvent.requestPermission();
-                if (response === 'granted') {
-                    window.addEventListener('deviceorientation', handleOrientation, true);
-                } else {
-                    console.warn("方位センサーが拒否されました");
-                }
-            } catch (e) {
-                console.error("センサー要求エラー:", e);
+    // 1. GPS取得（方位を待たずに実行）
+    navigator.geolocation.getCurrentPosition(
+        (p) => {
+            currentGeo = p;
+            $("lat").textContent = p.coords.latitude.toFixed(6);
+            $("lng").textContent = p.coords.longitude.toFixed(6);
+            $("geoCheck").textContent = "✅";
+        },
+        (err) => { 
+            console.error("GPS Error:", err);
+            $("geoCheck").textContent = "❌"; 
+            alert("GPS失敗: " + err.message);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+
+    // 2. 方位センサー取得（GPSを邪魔しないように実行）
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+            // iOSではここでユーザー許可が必要
+            const state = await DeviceOrientationEvent.requestPermission();
+            if (state === 'granted') {
+                window.addEventListener("deviceorientation", updateHeading, true);
             }
-        } else {
-            // Androidや古いブラウザ
-            window.addEventListener('deviceorientation', handleOrientation, true);
-        }
+        } catch (e) { console.error("Heading Error:", e); }
+    } else {
+        // Androidなど
+        window.addEventListener("deviceorientationabsolute", updateHeading, true) || 
+        window.addEventListener("deviceorientation", updateHeading, true);
+    }
+};
 
-        // 2. 方位の準備ができたらGPSを取りに行く
-        if (!navigator.geolocation) {
-          alert("GPS非対応");
-          els.btnGeo.disabled = false;
-          return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                currentGeo = pos;
-                els.lat.textContent = pos.coords.latitude.toFixed(7);
-                els.lng.textContent = pos.coords.longitude.toFixed(7);
-                // 方位(str)を含めて表示
-                els.acc.textContent = Math.round(pos.coords.accuracy) + "m (" + currentHeading.str + ")";
-                els.btnGeo.disabled = false;
-                els.btnGeo.textContent = "GPS取得";
-            },
-            (err) => {
-                alert("GPS失敗: " + err.message);
-                els.btnGeo.disabled = false;
-                els.btnGeo.textContent = "GPS取得";
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-    };
-}
+// --- 以下、既存の機能（保存・履歴・CSV・ZIP等）はそのまま維持 ---
+// ... (あなたの旧バージョンの後半部分をそのまま繋げてください)
